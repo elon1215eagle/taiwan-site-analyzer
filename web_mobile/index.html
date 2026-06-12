@@ -505,6 +505,7 @@
       emptyEl.hidden = true;
       resultEl.hidden = false;
       const restaurant = data.restaurant_analysis;
+      const dataQuality = data.data_quality || { score: 0, level: "low", signals: [] };
       resultEl.innerHTML = `
         <section class="summary">
           <div class="score-ring" style="--score:${data.overall_score}">
@@ -532,9 +533,19 @@
             <div class="mini"><strong>${restaurant.density_level}</strong><span>密度</span></div>
             <div class="mini"><strong>${restaurant.competition_level}</strong><span>競爭</span></div>
           </div>
+          ${restaurant.counts_by_radius ? `<p class="reason">半徑分布：1km ${restaurant.counts_by_radius["1km"] ?? 0} 家、2km ${restaurant.counts_by_radius["2km"] ?? 0} 家、3km ${restaurant.counts_by_radius["3km"] ?? 0} 家</p>` : ""}
           <p class="reason">${escapeHtml(restaurant.reason)}</p>
           <div class="section-title">類型分布</div>
           ${restaurant.category_summary.map(item => `<p class="reason">${escapeHtml(item.category)}：${item.count}</p>`).join("")}
+        </section>
+
+        <h3 class="section-title">資料精準度</h3>
+        <section class="card">
+          <div class="restaurant-row">
+            <div class="mini"><strong>${dataQuality.score}</strong><span>可信度</span></div>
+            <div class="mini"><strong>${levelText[dataQuality.level] || dataQuality.level}</strong><span>等級</span></div>
+          </div>
+          ${dataQuality.signals.map(item => `<p class="reason">‧ ${escapeHtml(item)}</p>`).join("")}
         </section>
 
         <h3 class="section-title">資料限制</h3>

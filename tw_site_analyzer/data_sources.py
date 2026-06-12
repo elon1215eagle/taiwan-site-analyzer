@@ -43,6 +43,36 @@ TDX_CITY_CODES = {
     "連江縣": "LienchiangCounty",
 }
 
+FOOD_PLACE_TYPES = (
+    "restaurant",
+    "cafe",
+    "bakery",
+    "meal_takeaway",
+    "meal_delivery",
+    "breakfast_restaurant",
+    "brunch_restaurant",
+    "fast_food_restaurant",
+    "hamburger_restaurant",
+    "pizza_restaurant",
+    "sandwich_shop",
+    "ice_cream_shop",
+    "dessert_shop",
+    "coffee_shop",
+    "tea_house",
+    "chinese_restaurant",
+    "taiwanese_restaurant",
+    "japanese_restaurant",
+    "korean_restaurant",
+    "thai_restaurant",
+    "vietnamese_restaurant",
+    "vegetarian_restaurant",
+    "seafood_restaurant",
+    "steak_house",
+    "hot_pot_restaurant",
+    "yakiniku_restaurant",
+    "barbecue_restaurant",
+)
+
 
 class RestaurantDataSource:
     def nearby(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
@@ -119,10 +149,12 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
     def nearby(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         if not self.api_key or scope.lat is None or scope.lon is None:
             return []
-        records = self._nearby_new(scope, radius_km)
-        if records:
-            return records
-        return self._nearby_legacy(scope, radius_km)
+        return dedupe_restaurants(
+            [
+                *self._nearby_new(scope, radius_km),
+                *self._nearby_legacy(scope, radius_km),
+            ]
+        )
 
     def _nearby_new(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         body = {
@@ -155,13 +187,16 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
         for place in payload.get("places", []):
             location = place.get("location", {})
             types = place.get("types", [])
+            category = pick_food_category(types)
+            if not category:
+                continue
             records.append(
                 RestaurantRecord(
                     name=place.get("displayName", {}).get("text", "未命名店家"),
                     address=place.get("formattedAddress", ""),
                     county=scope.county,
                     district=scope.district,
-                    category=types[0] if types else "餐飲",
+                    category=category,
                     status=place.get("businessStatus", ""),
                     lat=parse_float(location.get("latitude")),
                     lon=parse_float(location.get("longitude")),
@@ -170,38 +205,47 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
         return records
 
     def _nearby_legacy(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
-        params = urlencode(
-            {
+        records = []
+        page_token = None
+        for _ in range(3):
+            params = {
                 "location": f"{scope.lat},{scope.lon}",
                 "radius": str(int(min(radius_km * 1000, 50000))),
                 "type": "restaurant",
                 "language": "zh-TW",
                 "key": self.api_key,
             }
-        )
-        url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?{params}"
-        try:
-            with urlopen(url, timeout=10) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception:
-            return []
-        if payload.get("status") not in ("OK", "ZERO_RESULTS"):
-            return []
-        records = []
-        for place in payload.get("results", []):
-            location = place.get("geometry", {}).get("location", {})
-            records.append(
-                RestaurantRecord(
-                    name=place.get("name", "未命名店家"),
-                    address=place.get("vicinity", ""),
-                    county=scope.county,
-                    district=scope.district,
-                    category=(place.get("types") or ["餐飲"])[0],
-                    status=place.get("business_status", ""),
-                    lat=parse_float(location.get("lat")),
-                    lon=parse_float(location.get("lng")),
+            if page_token:
+                params["pagetoken"] = page_token
+                time.sleep(2)
+            url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?{urlencode(params)}"
+            try:
+                with urlopen(url, timeout=10) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except Exception:
+                break
+            if payload.get("status") not in ("OK", "ZERO_RESULTS"):
+                break
+            for place in payload.get("results", []):
+                location = place.get("geometry", {}).get("location", {})
+                category = pick_food_category(place.get("types") or [])
+                if not category:
+                    continue
+                records.append(
+                    RestaurantRecord(
+                        name=place.get("name", "未命名店家"),
+                        address=place.get("vicinity", ""),
+                        county=scope.county,
+                        district=scope.district,
+                        category=category,
+                        status=place.get("business_status", ""),
+                        lat=parse_float(location.get("lat")),
+                        lon=parse_float(location.get("lng")),
+                    )
                 )
-            )
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
         return records
 
 
@@ -361,12 +405,16 @@ def pick(row: dict, *keys: str) -> str | None:
 def parse_float(value: object) -> float | None:
     if value in (None, ""):
         return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def tdx_row_to_record(row: dict, scope: GeoScope) -> TrafficRecord | None:
     position = row.get("VDPosition") or row.get("Position") or row.get("position") or {}
-    lat = parse_float(position.get("PositionLat") or position.get("lat") or row.get("lat"))
-    lon = parse_float(position.get("PositionLon") or position.get("lon") or row.get("lon"))
+    lat = parse_float(position.get("PositionLat") or position.get("lat") or row.get("PositionLat") or row.get("lat"))
+    lon = parse_float(position.get("PositionLon") or position.get("lon") or row.get("PositionLon") or row.get("lon"))
     if lat is None or lon is None:
         return None
     flows = row.get("LinkFlows") or row.get("linkFlows") or []
@@ -381,8 +429,14 @@ def tdx_row_to_record(row: dict, scope: GeoScope) -> TrafficRecord | None:
                 vehicle_type = str(vehicle.get("VehicleType") or vehicle.get("vehicleType") or "")
                 volume = parse_float(vehicle.get("Volume") or vehicle.get("volume"))
                 vehicle_speed = parse_float(vehicle.get("Speed") or vehicle.get("speed"))
+                if volume is not None and volume < 0:
+                    volume = None
+                if vehicle_speed is not None and vehicle_speed < 0:
+                    vehicle_speed = None
                 if speed is None and vehicle_speed is not None:
                     speed = vehicle_speed
+                if volume is None:
+                    continue
                 if vehicle_type in ("M", "Motorcycle", "31", "機車"):
                     motorcycle_flow = (motorcycle_flow or 0) + (volume or 0)
                 elif vehicle_type in ("S", "SmallVehicle", "小型車", "小客車", "21"):
@@ -428,7 +482,22 @@ def merge_tdx_rows(static_row: dict, live_row: dict) -> dict:
     if "VDPosition" not in merged and "VDPosition" in static_row:
         merged["VDPosition"] = static_row["VDPosition"]
     return merged
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+
+
+def dedupe_restaurants(records: list[RestaurantRecord]) -> list[RestaurantRecord]:
+    deduped: list[RestaurantRecord] = []
+    seen: set[tuple[str, str]] = set()
+    for record in records:
+        key = (record.name.strip().lower(), record.address.strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def pick_food_category(types: list[str]) -> str | None:
+    for food_type in FOOD_PLACE_TYPES:
+        if food_type in types:
+            return food_type
+    return None

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from .cleaning import active_restaurants, average_flow, summarize_categories
 from .config import AnalyzerConfig
 from .data_sources import RestaurantDataSource, TrafficDataSource, build_data_sources
 from .geo import TaiwanGeocoder, commercial_strength_for
 from .models import Evidence, GeoScope
-from .utils import clamp, level_en, level_zh
+from .utils import clamp, haversine_km, level_en, level_zh
 
 
 class SiteSelectionAnalyzer:
@@ -42,6 +40,7 @@ class SiteSelectionAnalyzer:
         traffic = self._analyze_traffic(scope, evidence)
         crowd = self._analyze_crowd(scope, restaurant, traffic, evidence)
         overall_score = self._overall_score(crowd, traffic, restaurant)
+        data_quality = self._data_quality(scope, restaurant, traffic)
 
         return {
             "input_location": input_location,
@@ -55,18 +54,18 @@ class SiteSelectionAnalyzer:
             "restaurant_analysis": restaurant,
             "overall_score": overall_score,
             "overall_conclusion": self._overall_conclusion(overall_score, restaurant, traffic),
+            "data_quality": data_quality,
             "warnings": dedupe(evidence.warnings),
             "assumptions": dedupe(evidence.assumptions),
         }
 
     def _analyze_restaurants(self, scope: GeoScope, evidence: Evidence) -> dict:
         counts_by_radius = {}
-        records_3km = []
+        max_radius = max(self.config.restaurant_radii_km)
+        records_3km = active_restaurants(self.restaurant_source.nearby(scope, max_radius))
         for radius in self.config.restaurant_radii_km:
-            records = active_restaurants(self.restaurant_source.nearby(scope, radius))
+            records = restaurants_within_radius(scope, records_3km, radius)
             counts_by_radius[f"{int(radius)}km"] = len(records)
-            if radius == max(self.config.restaurant_radii_km):
-                records_3km = records
 
         if records_3km:
             evidence.data_used.append("餐飲資料:Google Places 或 TW_RESTAURANT_CSV")
@@ -92,6 +91,7 @@ class SiteSelectionAnalyzer:
             "category_summary": category_summary,
             "competition_level": level_zh(competition_score),
             "reason": reason,
+            "counts_by_radius": counts_by_radius,
             "_score": density_score,
             "_counts_by_radius": counts_by_radius,
         }
@@ -113,6 +113,7 @@ class SiteSelectionAnalyzer:
             else clamp(commercial_strength_for(scope) * 0.95)
         )
         data_used = ["TDX VD/本地快照"] if records else ["行政區商業強度代理推估"]
+        nearest_distance = min((record.distance_km for record in records if record.distance_km is not None), default=None)
         return {
             "car": {
                 "score": car_score,
@@ -126,6 +127,10 @@ class SiteSelectionAnalyzer:
                 "reason": traffic_reason(motorcycle_avg, motorcycle_score, "機車", records),
                 "data_used": data_used,
             },
+            "_record_count": len(records),
+            "_has_car_flow": car_avg is not None,
+            "_has_motorcycle_flow": motorcycle_avg is not None,
+            "_nearest_vd_distance_km": nearest_distance,
         }
 
     def _analyze_crowd(self, scope: GeoScope, restaurant: dict, traffic: dict, evidence: Evidence) -> dict:
@@ -166,16 +171,76 @@ class SiteSelectionAnalyzer:
             return "具備中等可行性，建議補強實地人流、租金成本與競品營業額推估後再決策。"
         return "目前可行性偏低或資料不足，建議先補齊精準地理編碼、餐飲店家與道路監測資料。"
 
+    def _data_quality(self, scope: GeoScope, restaurant: dict, traffic: dict) -> dict:
+        signals = []
+        score = 0
+        if scope.precision == "google_geocoding":
+            score += 35
+            signals.append("地址已由 Google Geocoding 解析為座標。")
+        elif scope.lat is not None and scope.lon is not None:
+            score += 20
+            signals.append("已取得代理座標，但精準度低於正式地理編碼。")
+        else:
+            signals.append("未取得座標，半徑型分析可信度較低。")
+
+        nearby_count = restaurant.get("nearby_count", 0)
+        if nearby_count >= 40:
+            score += 30
+            signals.append("餐飲樣本數充足，競爭密度判斷較穩。")
+        elif nearby_count >= 10:
+            score += 20
+            signals.append("餐飲樣本數中等，可作初步判斷。")
+        elif nearby_count > 0:
+            score += 10
+            signals.append("餐飲樣本數偏少，可能低估熱區密度。")
+        else:
+            signals.append("餐飲資料未命中，餐飲競爭主要為代理推估。")
+
+        traffic_records = traffic.get("_record_count", 0)
+        if traffic_records and traffic.get("_has_car_flow") and traffic.get("_has_motorcycle_flow"):
+            score += 30
+            signals.append("已命中附近 VD 且含汽車、機車流量。")
+        elif traffic_records:
+            score += 18
+            signals.append("已命中附近 VD，但車種流量欄位不完整。")
+        else:
+            signals.append("未命中附近 VD，車潮為代理推估。")
+
+        nearest_vd_distance = traffic.get("_nearest_vd_distance_km")
+        if nearest_vd_distance is not None and nearest_vd_distance <= 1.5:
+            score += 5
+            signals.append("最近 VD 距離在 1.5km 內。")
+
+        quality_score = clamp(score)
+        return {
+            "score": quality_score,
+            "level": level_en(quality_score),
+            "signals": signals,
+        }
+
 
 def flow_to_score(flow: float, mode: str) -> int:
-    divisor = 45 if mode == "car" else 35
-    return clamp(flow / divisor)
+    high_flow_threshold = 45 if mode == "car" else 35
+    return clamp(flow / high_flow_threshold * 100)
 
 
 def traffic_reason(avg: float | None, score: int, label: str, records: list) -> str:
     if avg is None:
         return f"未取得附近 VD {label}流量，分數 {score} 為商業強度代理推估。"
     return f"附近 {len(records)} 個道路監測點平均{label}流量約 {avg:.0f}，換算為 {score}/100。"
+
+
+def restaurants_within_radius(scope: GeoScope, records: list, radius_km: float) -> list:
+    if scope.lat is None or scope.lon is None:
+        return records
+    filtered = []
+    for record in records:
+        if record.lat is None or record.lon is None:
+            filtered.append(record)
+            continue
+        if haversine_km(scope.lat, scope.lon, record.lat, record.lon) <= radius_km:
+            filtered.append(record)
+    return filtered
 
 
 def dedupe(items: list[str]) -> list[str]:

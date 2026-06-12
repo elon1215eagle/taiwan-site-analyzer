@@ -6,6 +6,7 @@ def build_chinese_report(result: dict) -> str:
     restaurant = result["restaurant_analysis"]
     traffic = result["traffic_analysis"]
     crowd = result["crowd_analysis"]
+    data_quality = result.get("data_quality", {})
     lines = [
         f"# 吉多店面選址分析報告",
         "",
@@ -34,18 +35,30 @@ def build_chinese_report(result: dict) -> str:
             f"- 3km 內附近餐飲店數：{restaurant['nearby_count']}",
             f"- 餐飲密度：{restaurant['density_level']}",
             f"- 競爭程度：{restaurant['competition_level']}",
+            f"- 半徑分布：{restaurant.get('counts_by_radius', {})}",
             f"- 判斷原因：{restaurant['reason']}",
             "- 類型分布："
         ]
     )
     for item in restaurant["category_summary"]:
         lines.append(f"  - {item['category']}：{item['count']}")
+    if data_quality:
+        lines.extend(
+            [
+                "",
+                "## 六、資料精準度",
+                f"- 可信度分數：{data_quality.get('score', 0)}/100",
+                f"- 可信度等級：{data_quality.get('level', '')}",
+            ]
+        )
+        for signal in data_quality.get("signals", []):
+            lines.append(f"- {signal}")
     if result["warnings"]:
-        lines.extend(["", "## 六、資料限制與警告"])
+        lines.extend(["", "## 七、資料限制與警告"])
         for warning in result["warnings"]:
             lines.append(f"- {warning}")
     if result["assumptions"]:
-        lines.extend(["", "## 七、推估假設"])
+        lines.extend(["", "## 八、推估假設"])
         for assumption in result["assumptions"]:
             lines.append(f"- {assumption}")
     return "\n".join(lines)

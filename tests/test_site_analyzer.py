@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import unittest
 
-from tw_site_analyzer.analysis import SiteSelectionAnalyzer, public_json
+from tw_site_analyzer.analysis import SiteSelectionAnalyzer, flow_to_score, public_json
 from tw_site_analyzer.config import AnalyzerConfig
+from tw_site_analyzer.data_sources import parse_float
 
 
 def assert_no_internal_keys(value, case: unittest.TestCase):
@@ -47,6 +48,24 @@ class SiteAnalyzerTest(unittest.TestCase):
     def test_public_json_does_not_leak_internal_fields(self):
         result = public_json(self.analyzer().analyze("高雄市 左營區 巨蛋商圈"))
         assert_no_internal_keys(result, self)
+
+    def test_parse_float_keeps_numeric_source_fields(self):
+        self.assertEqual(parse_float("25.0339"), 25.0339)
+        self.assertEqual(parse_float(120), 120.0)
+        self.assertIsNone(parse_float(""))
+        self.assertIsNone(parse_float("not-a-number"))
+
+    def test_data_quality_is_returned_for_frontend(self):
+        result = public_json(self.analyzer().analyze("高雄市三民區建工路"))
+        self.assertIn("data_quality", result)
+        self.assertLessEqual({"score", "level", "signals"}, set(result["data_quality"]))
+        self.assertGreaterEqual(result["data_quality"]["score"], 0)
+        self.assertLessEqual(result["data_quality"]["score"], 100)
+
+    def test_flow_to_score_uses_hundred_point_scale(self):
+        self.assertEqual(flow_to_score(45, "car"), 100)
+        self.assertEqual(flow_to_score(35, "motorcycle"), 100)
+        self.assertGreater(flow_to_score(12, "car"), 20)
 
 
 if __name__ == "__main__":
