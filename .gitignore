@@ -1,0 +1,9 @@
+.env.local
+__pycache__/
+*.pyc
+node_modules/
+outputs/
+*.xlsx
+*.docx
+*.pdf
+*.png

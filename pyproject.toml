@@ -1,0 +1,17 @@
+[project]
+name = "taiwan-site-selection-analyzer"
+version = "0.1.0"
+description = "Taiwan storefront site selection analyzer with report and JSON output."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+http = ["requests>=2.31.0"]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+tw-site-analyzer = "tw_site_analyzer.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
