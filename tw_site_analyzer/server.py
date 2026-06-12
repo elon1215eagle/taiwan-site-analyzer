@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .analysis import SiteSelectionAnalyzer, public_json
+from .recommendation import build_reverse_report, recommend_locations
 from .report import build_chinese_report
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_mobile"
@@ -50,7 +51,7 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_POST(self) -> None:
-        if self.path != "/api/analyze":
+        if self.path not in ("/api/analyze", "/api/recommend"):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -58,6 +59,16 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode("utf-8"))
         except json.JSONDecodeError:
             self._send_json({"error": "INVALID_JSON", "message": "Request body must be JSON."}, 400)
+            return
+        if self.path == "/api/recommend":
+            business_type = str(body.get("business_type", "")).strip()
+            county = str(body.get("county", "")).strip()
+            district = str(body.get("district", "")).strip()
+            if not business_type or not county:
+                self._send_json({"error": "RECOMMEND_INPUT_REQUIRED", "message": "請輸入業態與縣市。"}, 400)
+                return
+            result = public_json(recommend_locations(self.analyzer, business_type, county, district))
+            self._send_json({"report": build_reverse_report(result), "json": result})
             return
         location = str(body.get("location", "")).strip()
         if not location:

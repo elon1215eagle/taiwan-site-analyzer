@@ -101,6 +101,51 @@
       align-items: center;
     }
 
+    .mode-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mode-button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      color: #344054;
+      font-size: 13px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .mode-button.active {
+      border-color: var(--brand);
+      background: #e8f7f4;
+      color: var(--brand-dark);
+    }
+
+    .reverse-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .reverse-form input:first-child {
+      grid-column: 1 / -1;
+    }
+
+    .reverse-form button {
+      grid-column: 1 / -1;
+      height: 44px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--brand);
+      color: white;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
     input {
       width: 100%;
       height: 48px;
@@ -405,16 +450,28 @@
         <h1>GDO店面選址分析器</h1>
         <span class="status-pill">手機版</span>
       </div>
-      <form id="searchForm" class="search">
-        <input id="locationInput" autocomplete="street-address" placeholder="輸入縣市、區域、路段或地標" value="高雄市 左營區 巨蛋商圈">
-        <button class="icon-button" type="submit" aria-label="開始分析">›</button>
-      </form>
-      <div class="quick-list" aria-label="快速範例">
-        <button class="quick" type="button">高雄市 左營區 巨蛋商圈</button>
-        <button class="quick" type="button">台南市 中西區 國華街</button>
-        <button class="quick" type="button">台北市 大安區 忠孝復興站</button>
-        <button class="quick" type="button">台中市 西屯區 逢甲商圈</button>
+      <div class="mode-tabs">
+        <button class="mode-button active" type="button" data-mode="single">單點分析</button>
+        <button class="mode-button" type="button" data-mode="reverse">反推選址</button>
       </div>
+      <div id="singleMode">
+        <form id="searchForm" class="search">
+          <input id="locationInput" autocomplete="street-address" placeholder="輸入縣市、區域、路段或地標" value="高雄市 左營區 巨蛋商圈">
+          <button class="icon-button" type="submit" aria-label="開始分析">›</button>
+        </form>
+        <div class="quick-list" aria-label="快速範例">
+          <button class="quick" type="button">高雄市 左營區 巨蛋商圈</button>
+          <button class="quick" type="button">台南市 中西區 國華街</button>
+          <button class="quick" type="button">台北市 大安區 忠孝復興站</button>
+          <button class="quick" type="button">台中市 西屯區 逢甲商圈</button>
+        </div>
+      </div>
+      <form id="recommendForm" class="reverse-form" hidden>
+        <input id="businessInput" placeholder="要開的業態，例如：炸雞、餐盒、美容" value="炸雞">
+        <input id="countyInput" placeholder="縣市，例如：高雄市" value="高雄市">
+        <input id="districtInput" placeholder="行政區，可空白，例如：三民區">
+        <button type="submit">產生推薦排序</button>
+      </form>
       <div id="loading" class="loading">分析中，正在整理商圈、人潮、車潮與競爭資料...</div>
       <div id="error" class="error"></div>
       <button id="installButton" class="install-button" type="button">安裝到手機桌面</button>
@@ -428,7 +485,12 @@
 
   <script>
     const form = document.querySelector("#searchForm");
+    const recommendForm = document.querySelector("#recommendForm");
     const input = document.querySelector("#locationInput");
+    const businessInput = document.querySelector("#businessInput");
+    const countyInput = document.querySelector("#countyInput");
+    const districtInput = document.querySelector("#districtInput");
+    const singleMode = document.querySelector("#singleMode");
     const resultEl = document.querySelector("#result");
     const emptyEl = document.querySelector("#empty");
     const loadingEl = document.querySelector("#loading");
@@ -451,6 +513,27 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       analyze(input.value.trim());
+    });
+
+    recommendForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      recommend({
+        business_type: businessInput.value.trim(),
+        county: countyInput.value.trim(),
+        district: districtInput.value.trim()
+      });
+    });
+
+    document.querySelectorAll(".mode-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = button.dataset.mode;
+        document.querySelectorAll(".mode-button").forEach(item => item.classList.toggle("active", item === button));
+        singleMode.hidden = mode !== "single";
+        recommendForm.hidden = mode !== "reverse";
+        emptyEl.textContent = mode === "reverse"
+          ? "輸入業態與縣市/行政區後，系統會反推適合開店的候選區域與排序報告。"
+          : "輸入地點後，即可查看四時段人潮、汽機車車潮、餐飲競爭與 JSON。";
+      });
     });
 
     document.querySelectorAll(".quick").forEach((button) => {
@@ -496,6 +579,29 @@
         render(payload.json, payload.report);
       } catch (error) {
         showError(error.message || "系統暫時無法分析，請稍後再試。");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function recommend(payload) {
+      if (!payload.business_type || !payload.county) {
+        showError("請輸入業態與縣市，行政區可空白。");
+        return;
+      }
+      setLoading(true);
+      hideError();
+      try {
+        const response = await fetch(`${API_BASE}/api/recommend`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "反推失敗");
+        renderRecommendations(result.json, result.report);
+      } catch (error) {
+        showError(error.message || "系統暫時無法反推選址，請稍後再試。");
       } finally {
         setLoading(false);
       }
@@ -573,6 +679,58 @@
       resultEl.querySelectorAll(".tab").forEach((tab) => {
         tab.addEventListener("click", () => switchTab(tab.dataset.view));
       });
+    }
+
+    function renderRecommendations(data, report) {
+      emptyEl.hidden = true;
+      resultEl.hidden = false;
+      resultEl.innerHTML = `
+        <section class="summary">
+          <div class="score-ring" style="--score:${data.recommendations[0]?.fit_score || 0}">
+            <div class="score-value">${data.recommendations[0]?.fit_score || 0}</div>
+          </div>
+          <div>
+            <h2>${escapeHtml(data.business_type)}｜${escapeHtml(data.geo_scope.county)}${escapeHtml(data.geo_scope.district)}</h2>
+            <p>${escapeHtml(data.overall_conclusion)}</p>
+          </div>
+        </section>
+
+        <h3 class="section-title">推薦區域排序</h3>
+        <section class="grid">
+          ${data.recommendations.map(item => recommendationCard(item)).join("")}
+        </section>
+
+        <h3 class="section-title">推估假設</h3>
+        <section class="card">${data.assumptions.map(item => `<p class="reason">‧ ${escapeHtml(item)}</p>`).join("")}</section>
+
+        <div class="tabs">
+          <button class="tab active" type="button" data-view="report">中文報告</button>
+          <button class="tab" type="button" data-view="json">JSON</button>
+        </div>
+        <section id="reportView" class="report">${escapeHtml(report)}</section>
+        <pre id="jsonView" hidden>${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+      `;
+      resultEl.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => switchTab(tab.dataset.view));
+      });
+    }
+
+    function recommendationCard(item) {
+      const source = item.source_analysis;
+      return `
+        <article class="card">
+          <div class="metric-head">
+            <div class="metric-name">No.${item.rank} ${escapeHtml(item.area)}</div>
+            <div class="metric-score">${item.fit_score}</div>
+          </div>
+          <div class="bar" style="--value:${item.fit_score}"><span></span></div>
+          <span class="level ${item.level}">${levelText[item.level] || item.level}</span>
+          <p class="reason">${escapeHtml(item.reason)}</p>
+          <p class="reason">候選點：${escapeHtml(item.candidate_location)}</p>
+          <p class="reason">單點 ${source.overall_score}/100｜餐飲/商業 ${source.restaurant_nearby_count} 筆｜汽車 ${source.car_score}｜機車 ${source.motorcycle_score}</p>
+          <p class="reason">${escapeHtml(item.suggested_action)}</p>
+        </article>
+      `;
     }
 
     function metricCard(name, item) {

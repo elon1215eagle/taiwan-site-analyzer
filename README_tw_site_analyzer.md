@@ -114,3 +114,21 @@ $env:TW_TRAFFIC_VD_JSON="C:\data\tdx_vd_snapshot.json"
 ```powershell
 python -m pytest
 ```
+
+## 反向選址推薦 API
+
+```text
+POST http://127.0.0.1:8787/api/recommend
+```
+
+範例 body：
+
+```json
+{
+  "business_type": "炸雞",
+  "county": "高雄市",
+  "district": "三民區"
+}
+```
+
+回傳內容包含推薦區域排序、業態適配分數、管理動作、中文報告與前端可用 JSON。若 `district` 留空，系統會比較該縣市內的候選行政區；若有指定行政區，系統會在該區內產生商圈、車站、夜市、市場、學區、主要道路等候選點。

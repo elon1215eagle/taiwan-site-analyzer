@@ -6,6 +6,7 @@ import unittest
 from tw_site_analyzer.analysis import SiteSelectionAnalyzer, flow_to_score, public_json
 from tw_site_analyzer.config import AnalyzerConfig
 from tw_site_analyzer.data_sources import parse_float
+from tw_site_analyzer.recommendation import build_reverse_report, recommend_locations
 
 
 def assert_no_internal_keys(value, case: unittest.TestCase):
@@ -66,6 +67,14 @@ class SiteAnalyzerTest(unittest.TestCase):
         self.assertEqual(flow_to_score(45, "car"), 100)
         self.assertEqual(flow_to_score(35, "motorcycle"), 100)
         self.assertGreater(flow_to_score(12, "car"), 20)
+
+    def test_reverse_recommendation_returns_ranked_candidates(self):
+        result = public_json(recommend_locations(self.analyzer(), "炸雞", "高雄市", "三民區", limit=3))
+        self.assertEqual(result["business_type"], "炸雞")
+        self.assertLessEqual(len(result["recommendations"]), 3)
+        self.assertGreater(len(result["recommendations"]), 0)
+        self.assertLessEqual({"rank", "area", "fit_score", "reason", "source_analysis"}, set(result["recommendations"][0]))
+        self.assertIn("GDO反向店面選址建議報告", build_reverse_report(result))
 
 
 if __name__ == "__main__":
