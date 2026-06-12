@@ -7,7 +7,7 @@ def build_chinese_report(result: dict) -> str:
     traffic = result["traffic_analysis"]
     crowd = result["crowd_analysis"]
     lines = [
-        f"# 台灣店面選址分析報告",
+        f"# 吉多店面選址分析報告",
         "",
         f"## 一、分析地點",
         f"- 輸入地點：{result['input_location']}",
