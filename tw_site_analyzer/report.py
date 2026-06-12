@@ -8,7 +8,7 @@ def build_chinese_report(result: dict) -> str:
     crowd = result["crowd_analysis"]
     data_quality = result.get("data_quality", {})
     lines = [
-        f"# 吉多店面選址分析報告",
+        f"# GDO店面選址分析報告",
         "",
         f"## 一、分析地點",
         f"- 輸入地點：{result['input_location']}",
