@@ -174,7 +174,7 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
             headers={
                 "Content-Type": "application/json",
                 "X-Goog-Api-Key": self.api_key,
-                "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.types,places.location,places.businessStatus",
+                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types,places.location,places.businessStatus,places.rating,places.userRatingCount,places.priceLevel",
             },
             method="POST",
         )
@@ -200,6 +200,10 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
                     status=place.get("businessStatus", ""),
                     lat=parse_float(location.get("latitude")),
                     lon=parse_float(location.get("longitude")),
+                    place_id=str(place.get("id") or ""),
+                    rating=parse_float(place.get("rating")),
+                    user_ratings_total=parse_int(place.get("userRatingCount")),
+                    price_level=parse_google_price_level(place.get("priceLevel")),
                 )
             )
         return records
@@ -241,6 +245,10 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
                         status=place.get("business_status", ""),
                         lat=parse_float(location.get("lat")),
                         lon=parse_float(location.get("lng")),
+                        place_id=str(place.get("place_id") or ""),
+                        rating=parse_float(place.get("rating")),
+                        user_ratings_total=parse_int(place.get("user_ratings_total")),
+                        price_level=parse_int(place.get("price_level")),
                     )
                 )
             page_token = payload.get("next_page_token")
@@ -409,6 +417,30 @@ def parse_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def parse_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_google_price_level(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str) and value.startswith("PRICE_LEVEL_"):
+        mapping = {
+            "PRICE_LEVEL_FREE": 0,
+            "PRICE_LEVEL_INEXPENSIVE": 1,
+            "PRICE_LEVEL_MODERATE": 2,
+            "PRICE_LEVEL_EXPENSIVE": 3,
+            "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+        }
+        return mapping.get(value)
+    return parse_int(value)
 
 
 def tdx_row_to_record(row: dict, scope: GeoScope) -> TrafficRecord | None:

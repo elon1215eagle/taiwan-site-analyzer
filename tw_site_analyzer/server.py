@@ -9,6 +9,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .analysis import SiteSelectionAnalyzer, public_json
+from .market_report import build_market_report, build_market_report_text
+from .nearby import build_nearby_report, nearby_stores
 from .recommendation import build_reverse_report, recommend_locations
 from .report import build_chinese_report
 
@@ -51,7 +53,7 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_POST(self) -> None:
-        if self.path not in ("/api/analyze", "/api/recommend"):
+        if self.path not in ("/api/analyze", "/api/recommend", "/api/nearby", "/api/market-report"):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -69,6 +71,27 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
                 return
             result = public_json(recommend_locations(self.analyzer, business_type, county, district))
             self._send_json({"report": build_reverse_report(result), "json": result})
+            return
+        if self.path == "/api/nearby":
+            location = str(body.get("location", "")).strip()
+            keyword = str(body.get("keyword", "")).strip()
+            radius_km = body.get("radius_km", 0.8)
+            limit = body.get("limit", 40)
+            if not location:
+                self._send_json({"error": "LOCATION_REQUIRED", "message": "請輸入查詢地址或地標。"}, 400)
+                return
+            result = public_json(nearby_stores(self.analyzer, location, radius_km, keyword, limit))
+            self._send_json({"report": build_nearby_report(result), "json": result})
+            return
+        if self.path == "/api/market-report":
+            location = str(body.get("location", "")).strip()
+            business_type = str(body.get("business_type", "")).strip()
+            radius_km = body.get("radius_km", 0.8)
+            if not location or not business_type:
+                self._send_json({"error": "MARKET_REPORT_INPUT_REQUIRED", "message": "請輸入地址與業態。"}, 400)
+                return
+            result = public_json(build_market_report(self.analyzer, location, business_type, radius_km))
+            self._send_json({"report": build_market_report_text(result), "json": result})
             return
         location = str(body.get("location", "")).strip()
         if not location:

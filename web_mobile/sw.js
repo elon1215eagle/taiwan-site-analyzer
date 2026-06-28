@@ -1,4 +1,4 @@
-const CACHE_NAME = "tw-site-analyzer-v1";
+const CACHE_NAME = "gdo-market-report-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -27,6 +27,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });

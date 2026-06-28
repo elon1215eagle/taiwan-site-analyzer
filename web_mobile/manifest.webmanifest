@@ -1,12 +1,12 @@
 {
-  "name": "GDO店面選址分析器",
-  "short_name": "GDO選址",
-  "description": "輸入台灣縣市、行政區、路段或地標，快速查看人潮、車潮與餐飲競爭分析。",
+  "name": "GDO 開店找點 AI 分析",
+  "short_name": "GDO 找點",
+  "description": "輸入地址與業態，產生同業分布、營收機會、客單價、競品與評論痛點分析。",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f6f7f9",
-  "theme_color": "#0f766e",
+  "background_color": "#f8f8fb",
+  "theme_color": "#6254f3",
   "orientation": "portrait",
   "icons": [
     {

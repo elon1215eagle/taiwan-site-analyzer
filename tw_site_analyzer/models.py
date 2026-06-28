@@ -23,10 +23,15 @@ class RestaurantRecord:
     address: str
     county: str = ""
     district: str = ""
-    category: str = "未分類餐飲"
+    category: str = "餐飲"
     status: str = ""
     lat: float | None = None
     lon: float | None = None
+    place_id: str = ""
+    rating: float | None = None
+    user_ratings_total: int | None = None
+    price_level: int | None = None
+    reviews: list[dict[str, str | int | float]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
