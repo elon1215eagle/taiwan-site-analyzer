@@ -21,6 +21,24 @@ class CountingGeocoder:
         return GeoScope("高雄市", "三民區", location, 22.65, 120.32, "google_geocoding")
 
 
+class FixedGeocoder:
+    def __init__(self, county: str, district: str, lat: float, lon: float):
+        self.county = county
+        self.district = district
+        self.lat = lat
+        self.lon = lon
+
+    def geocode(self, location: str) -> GeoScope:
+        return GeoScope(
+            self.county,
+            self.district,
+            location,
+            self.lat,
+            self.lon,
+            "google_geocoding",
+        )
+
+
 class CountingRestaurantSource(RestaurantDataSource):
     source_name = "test_restaurants"
 
@@ -88,7 +106,17 @@ class FakeReviewSource(PlaceReviewSource):
         ]
 
 
-def restaurant(name: str, category: str, place_id: str, rating: float, reviews: int) -> RestaurantRecord:
+def restaurant(
+    name: str,
+    category: str,
+    place_id: str,
+    rating: float,
+    reviews: int,
+    *,
+    lat: float = 22.65,
+    lon: float = 120.32,
+    price_level: int | None = 1,
+) -> RestaurantRecord:
     return RestaurantRecord(
         name=name,
         address=f"高雄市三民區{name}路1號",
@@ -96,12 +124,12 @@ def restaurant(name: str, category: str, place_id: str, rating: float, reviews: 
         district="三民區",
         category=category,
         status="OPERATIONAL",
-        lat=22.65,
-        lon=120.32,
+        lat=lat,
+        lon=lon,
         place_id=place_id,
         rating=rating,
         user_ratings_total=reviews,
-        price_level=1,
+        price_level=price_level,
     )
 
 
@@ -146,6 +174,9 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertEqual(set(self.review_source.calls), {"direct-1", "direct-2", "adjacent-1"})
         self.assertEqual(result["analysis_id"], "analysis-test-001")
         self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["status"], "acquired")
+        self.assertEqual(result["contract_version"], "market-report-v2")
+        self.assertEqual(result["market_map"]["status"], "acquired")
+        self.assertEqual(result["market_map"]["point_count"], 3)
         self.assertEqual([item["competitor_level"] for item in result["top_competitors"]], ["直接競品", "直接競品", "鄰近競品"])
         self.assertNotIn("_reviews", result["top_competitors"][0])
 
@@ -162,6 +193,7 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["status"], "confirmed_zero")
         self.assertEqual(result["summary"]["same_type_count"], 0)
         self.assertEqual(result["summary"]["all_food_count"], 0)
+        self.assertEqual(result["market_map"]["status"], "unavailable")
 
     def test_failed_restaurant_evidence_suppresses_estimates(self):
         source = CountingRestaurantSource(error=RuntimeError("upstream_down"))
@@ -254,6 +286,79 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 0.09)
         self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["error_type"], "timeout")
         self.assertEqual(result["revenue_performance"]["estimated_monthly_revenue_range"], [])
+
+    def test_different_centers_change_map_positions_and_decision_summary(self):
+        east_store = restaurant(
+            "東側炸雞",
+            "炸雞店",
+            "east-1",
+            4.5,
+            600,
+            lat=22.65,
+            lon=120.324,
+        )
+        source = CountingRestaurantSource([east_store])
+        analyzer_a = SiteSelectionAnalyzer(
+            config=AnalyzerConfig(),
+            geocoder=FixedGeocoder("高雄市", "三民區", 22.65, 120.32),
+            restaurant_source=source,
+        )
+        analyzer_b = SiteSelectionAnalyzer(
+            config=AnalyzerConfig(),
+            geocoder=FixedGeocoder("高雄市", "苓雅區", 22.65, 120.323),
+            restaurant_source=source,
+        )
+        report_a = build_market_report(
+            analyzer_a,
+            "高雄市三民區甲地址",
+            "炸雞",
+            evidence_collector=MarketEvidenceCollector(
+                analyzer_a, review_source=self.review_source, budget_seconds=1
+            ),
+        )
+        report_b = build_market_report(
+            analyzer_b,
+            "高雄市苓雅區乙地址",
+            "炸雞",
+            evidence_collector=MarketEvidenceCollector(
+                analyzer_b, review_source=self.review_source, budget_seconds=1
+            ),
+        )
+
+        self.assertNotEqual(
+            report_a["market_map"]["points"][0]["x"],
+            report_b["market_map"]["points"][0]["x"],
+        )
+        self.assertIn("甲地址", report_a["summary"]["conclusion"])
+        self.assertIn("乙地址", report_b["summary"]["conclusion"])
+        self.assertNotEqual(report_a["summary"]["conclusion"], report_b["summary"]["conclusion"])
+
+    def test_ticket_estimate_is_unavailable_without_price_evidence(self):
+        no_price = restaurant(
+            "無價位炸雞",
+            "炸雞店",
+            "no-price",
+            4.2,
+            100,
+            price_level=None,
+        )
+        source = CountingRestaurantSource([no_price])
+        analyzer = SiteSelectionAnalyzer(
+            config=AnalyzerConfig(),
+            geocoder=self.geocoder,
+            restaurant_source=source,
+        )
+        result = build_market_report(
+            analyzer,
+            "高雄市三民區建工路",
+            "炸雞",
+            evidence_collector=MarketEvidenceCollector(
+                analyzer, review_source=self.review_source, budget_seconds=1
+            ),
+        )
+
+        self.assertFalse(result["average_ticket_distribution"]["available"])
+        self.assertEqual(result["average_ticket_distribution"]["distribution"], [])
 
 
 if __name__ == "__main__":

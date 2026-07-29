@@ -154,9 +154,9 @@
         linear-gradient(0deg, transparent 0 30%, rgba(151,166,184,.28) 30% 31%, transparent 31% 64%, rgba(151,166,184,.28) 64% 65%, transparent 65%),
         #e9eef4;
     }
-    .heat { position:absolute; inset:0; background:radial-gradient(circle at 45% 55%, rgba(217,45,32,.25), transparent 22%), radial-gradient(circle at 62% 35%, rgba(199,138,18,.28), transparent 24%), radial-gradient(circle at 30% 72%, rgba(20,99,255,.17), transparent 25%); }
     .dot { position:absolute; width:18px; height:18px; border-radius:50%; background:rgba(20,99,255,.7); border:2px solid rgba(255,255,255,.86); }
     .dot.highlight { width:20px; height:20px; background:var(--red); }
+    .map-unavailable { position:absolute; inset:0; display:grid; place-items:center; padding:24px; color:var(--muted); font-weight:850; text-align:center; }
     .center-pin { position:absolute; left:50%; top:45%; width:54px; height:54px; border-radius:50% 50% 50% 8px; background:var(--orange); transform:translate(-50%,-50%) rotate(-45deg); box-shadow:0 10px 22px rgba(249,115,22,.34); z-index:3; }
     .center-pin::after { content:""; position:absolute; left:16px; top:16px; width:18px; height:18px; border-radius:50%; border:4px solid rgba(255,255,255,.9); }
     .legend { position:absolute; left:16px; bottom:16px; z-index:4; display:grid; gap:10px; min-width:168px; padding:14px 16px; border-radius:8px; background:rgba(255,255,255,.95); box-shadow:0 10px 24px rgba(39,44,72,.13); font-weight:900; }
@@ -164,7 +164,7 @@
     .swatch { width:16px; height:16px; border-radius:50%; background:rgba(20,99,255,.7); }
     .swatch.accent { background:var(--red); }
     .bars { display:grid; gap:10px; }
-    .bar-row { display:grid; grid-template-columns:92px 1fr 42px; align-items:center; gap:10px; font-size:14px; color:#424856; }
+    .bar-row { display:grid; grid-template-columns:92px 1fr; align-items:center; gap:10px; font-size:14px; color:#424856; }
     .bar-track { height:12px; overflow:hidden; border-radius:999px; background:#e9eef4; }
     .bar-fill { height:100%; border-radius:999px; background:var(--blue); }
     .bar-row:nth-child(2n) .bar-fill { background:var(--gold); }
@@ -312,28 +312,28 @@
           <article class="card metric"><span>客單定位</span><strong>${escapeHtml(data.average_ticket_distribution.position)}</strong><small>需菜單/POS 校正</small></article>
         </div>
 
-        <h2 class="section-title">同業與人流分布</h2>
-        <p class="subtitle">以開店地址為中心，觀察同類店與餐飲熱區集中狀況。</p>
+        <h2 class="section-title">同業與餐飲分布</h2>
+        <p class="subtitle">以開店地址為中心，依實際店家座標呈現相對位置。</p>
         <div class="map-box">
-          <span class="heat"></span>
-          ${renderDots(data.summary.same_type_count, data.summary.all_food_count)}
+          ${renderDots(data.market_map)}
           <span class="center-pin"></span>
           <div class="legend">
             <div class="legend-item"><span class="swatch accent"></span><span>${escapeHtml(data.business_type)}</span></div>
             <div class="legend-item"><span class="swatch"></span><span>其他餐飲</span></div>
           </div>
         </div>
+        <p class="note">${escapeHtml(data.market_map.source)}｜${escapeHtml(data.market_map.center_label)}｜${data.market_map.point_count} 個有效點位</p>
 
-        <h2 class="section-title">營收表現</h2>
+        <h2 class="section-title">營收機會推估</h2>
         <section class="card">
           <p><strong>推估月營收區間：</strong>${revenueRange(data.revenue_performance.estimated_monthly_revenue_range)}</p>
           <p class="note">${escapeHtml(data.revenue_performance.basis)}</p>
         </section>
 
-        <h2 class="section-title">月營收分布</h2>
+        <h2 class="section-title">營收情境比較</h2>
         <section class="card bars">${data.monthly_revenue_distribution.length ? data.monthly_revenue_distribution.map(barRow).join("") : unavailableMessage()}</section>
 
-        <h2 class="section-title">客單價分布</h2>
+        <h2 class="section-title">客單價帶推估</h2>
         <section class="card bars">
           <p><strong>${escapeHtml(data.average_ticket_distribution.position)}</strong></p>
           ${data.average_ticket_distribution.distribution.length ? data.average_ticket_distribution.distribution.map(barRow).join("") : unavailableMessage()}
@@ -348,9 +348,9 @@
         <h2 class="section-title">好評與差評摘要</h2>
         <section class="card">
           <p><strong>好評方向</strong></p>
-          ${data.review_summary.positive.map(item => `<p>+ ${escapeHtml(item)}</p>`).join("")}
+          ${data.review_summary.positive.length ? data.review_summary.positive.map(item => `<p>+ ${escapeHtml(item)}</p>`).join("") : `<p class="note">尚無足夠正向評論文字。</p>`}
           <p><strong>差評/缺口</strong></p>
-          ${data.review_summary.negative.map(item => `<p>- ${escapeHtml(item)}</p>`).join("")}
+          ${data.review_summary.negative.length ? data.review_summary.negative.map(item => `<p>- ${escapeHtml(item)}</p>`).join("") : `<p class="note">尚無足夠低分評論文字。</p>`}
           <p class="note">${escapeHtml(data.review_summary.data_status)}</p>
         </section>
 
@@ -364,18 +364,14 @@
       `;
     }
 
-    function renderDots(sameTypeCount, allFoodCount) {
-      const dots = [];
-      const safeAllFoodCount = Number.isFinite(Number(allFoodCount)) ? Number(allFoodCount) : 0;
-      const safeSameTypeCount = Number.isFinite(Number(sameTypeCount)) ? Number(sameTypeCount) : 0;
-      const total = Math.min(Math.max(safeAllFoodCount, 16), 95);
-      for (let index = 0; index < total; index += 1) {
-        const x = 8 + ((index * 37) % 84);
-        const y = 10 + ((index * 53) % 78);
-        const highlight = index < safeSameTypeCount ? " highlight" : "";
-        dots.push(`<span class="dot${highlight}" style="left:${x}%;top:${y}%"></span>`);
+    function renderDots(marketMap) {
+      if (!marketMap || marketMap.status !== "acquired" || !marketMap.points.length) {
+        return `<div class="map-unavailable">未取得可定位的店家座標</div>`;
       }
-      return dots.join("");
+      return marketMap.points.map((point) => {
+        const highlight = point.kind === "direct" ? " highlight" : "";
+        return `<span class="dot${highlight}" style="left:${Number(point.x)}%;top:${Number(point.y)}%" title="${escapeHtml(point.name)}"></span>`;
+      }).join("");
     }
 
     function barRow(item) {
@@ -385,7 +381,6 @@
         <div class="bar-row">
           <span>${escapeHtml(name)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${Number(item.share) || 0}%"></div></div>
-          <span>${Number(item.share) || 0}%</span>
         </div>
         <p style="margin-top:-4px;">${escapeHtml(label)}</p>
       `;

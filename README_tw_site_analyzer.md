@@ -18,7 +18,7 @@
 ## 架構邊界
 
 - `market_evidence.py`：集中外部市場證據、12 秒截止、競品分層與評論取得。
-- `market_contract.py`：集中 `market-report-v1` JSON 契約與輸出驗證。
+- `market_contract.py`：集中 `market-report-v2` JSON 契約與輸出驗證。
 - `application.py`：集中端點驗證、分析執行與應用錯誤契約。
 - `server.py`：只負責 HTTP 收送與靜態檔案。
 - `observability.py`：提供部署版本、依賴 readiness、請求統計與最近一次市場報告狀態。

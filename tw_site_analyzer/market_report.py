@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from math import cos, radians
 from statistics import median
 
 from .analysis import SiteSelectionAnalyzer
 from .market_contract import (
     Competitor,
     DistributionItem,
+    MarketMap,
+    MarketMapPoint,
     MarketReportContract,
     MarketSummary,
     RevenuePerformance,
@@ -28,6 +31,7 @@ def build_market_report(
         radius_km,
     )
     top_competitors = build_competitor_cards(snapshot)
+    market_map = build_market_map(snapshot)
     if snapshot.restaurant_numbers_available:
         stores = snapshot.direct_competitors
         same_type_count: int | None = len(stores)
@@ -76,6 +80,13 @@ def build_market_report(
             all_food_count=all_food_count,
             density_level=market_density,
             data_status=snapshot_status_text(snapshot),
+        ),
+        market_map=MarketMap(
+            status=market_map["status"],
+            source=market_map["source"],
+            center_label=market_map["center_label"],
+            point_count=market_map["point_count"],
+            points=[MarketMapPoint(**item) for item in market_map["points"]],
         ),
         revenue_performance=RevenuePerformance(**revenue),
         monthly_revenue_distribution=[DistributionItem(**item) for item in monthly_distribution],
@@ -166,9 +177,61 @@ def unavailable_ticket_module() -> dict:
     return {
         "position": "資料不足",
         "distribution": [],
-        "basis": "市場證據未完整取得，本次不產生客單價分布。",
+        "basis": "未取得同業價位證據，本次不產生客單價帶推估。",
         "available": False,
     }
+
+
+def build_market_map(snapshot: MarketEvidenceSnapshot) -> dict:
+    center_lat = snapshot.geo_scope.get("lat")
+    center_lon = snapshot.geo_scope.get("lon")
+    center_label = snapshot.geo_scope.get("address_or_landmark") or snapshot.input_location
+    if center_lat is None or center_lon is None:
+        return {
+            "status": "unavailable",
+            "source": "座標未取得",
+            "center_label": center_label,
+            "point_count": 0,
+            "points": [],
+        }
+
+    direct_keys = {store_identity(item) for item in snapshot.direct_competitors}
+    points = []
+    radius = max(snapshot.radius_km, 0.1)
+    longitude_scale = 111.32 * max(cos(radians(float(center_lat))), 0.1)
+    for store in snapshot.all_stores[:100]:
+        lat = store.get("_lat")
+        lon = store.get("_lon")
+        if lat is None or lon is None:
+            continue
+        east_km = (float(lon) - float(center_lon)) * longitude_scale
+        north_km = (float(lat) - float(center_lat)) * 110.57
+        points.append(
+            {
+                "name": store.get("name") or "未命名店家",
+                "kind": "direct" if store_identity(store) in direct_keys else "adjacent",
+                "x": round(clamp(50 + east_km / radius * 46, 4, 96), 1),
+                "y": round(clamp(50 - north_km / radius * 46, 4, 96), 1),
+            }
+        )
+    return {
+        "status": "acquired" if points else "unavailable",
+        "source": "Google Places 店家座標相對分布" if points else "店家座標未取得",
+        "center_label": center_label,
+        "point_count": len(points),
+        "points": points,
+    }
+
+
+def store_identity(store: dict) -> str:
+    place_id = str(store.get("place_id") or "").strip()
+    if place_id:
+        return f"place:{place_id}"
+    return f"text:{store.get('name', '')}|{store.get('address', '')}"
+
+
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(value, maximum))
 
 
 def build_snapshot_conclusion(
@@ -177,12 +240,58 @@ def build_snapshot_conclusion(
     top_competitors: list[dict],
 ) -> str:
     if not snapshot.restaurant_numbers_available:
-        return "市場證據未完整取得，本次僅提供可追溯的部分報告，不做營收或競爭數字判斷。"
-    return build_conclusion(
-        snapshot.business_type,
-        density,
-        len(snapshot.direct_competitors),
-        top_competitors,
+        return (
+            f"「{snapshot.input_location}」的市場店家證據未完整取得，本次不做競爭與營收判斷；"
+            "建議確認地址或稍後重查。"
+        )
+    return build_evidence_conclusion(snapshot, density, top_competitors)
+
+
+def build_evidence_conclusion(
+    snapshot: MarketEvidenceSnapshot,
+    density: str,
+    top_competitors: list[dict],
+) -> str:
+    direct_count = len(snapshot.direct_competitors)
+    all_count = len(snapshot.all_stores)
+    scope = f"「{snapshot.input_location}」周邊 {snapshot.radius_km:g} 公里"
+    if direct_count == 0:
+        if all_count >= 12:
+            return (
+                f"{scope}已找到 {all_count} 間餐飲，但未找到明確{snapshot.business_type}直接競品。"
+                "可視為品類空間訊號，但不能等同有需求；建議先現勘尖峰人流與外送訂單密度。"
+            )
+        return (
+            f"{scope}僅找到 {all_count} 間餐飲，且未找到明確{snapshot.business_type}直接競品。"
+            "需求與競爭證據都偏弱，建議先做平假日尖峰人流與商圈消費驗證。"
+        )
+
+    leader = next(
+        (item for item in top_competitors if item["competitor_level"] == "直接競品"),
+        top_competitors[0] if top_competitors else None,
+    )
+    leader_text = ""
+    if leader:
+        rating = leader.get("rating")
+        reviews = leader.get("user_ratings_total")
+        proof = []
+        if rating is not None:
+            proof.append(f"評分 {rating}")
+        if reviews is not None:
+            proof.append(f"{reviews} 則評論")
+        leader_text = f"；頭部競品為「{leader['name']}」"
+        if proof:
+            leader_text += f"（{'、'.join(proof)}）"
+
+    if density == "高":
+        action = "競爭已集中，須先完成產品差異、價格帶與出餐速度測試，再決定承租。"
+    elif all_count >= 12:
+        action = "商圈餐飲活動存在，建議比對前三名競品評論缺口並完成現場尖峰驗證。"
+    else:
+        action = "同業雖存在但餐飲聚集度有限，建議先確認人流來源、外送需求與租金損益兩平。"
+    return (
+        f"{scope}找到 {direct_count} 間{snapshot.business_type}直接競品、共 {all_count} 間餐飲，"
+        f"競爭密度為{density}{leader_text}。{action}"
     )
 
 
@@ -255,49 +364,39 @@ def build_distribution(revenue_range: list[int]) -> list[dict]:
     low, high = revenue_range
     mid = int((low + high) / 2)
     return [
-        {"range": f"{low // 10000}-{mid // 10000} 萬", "level": "保守", "share": 35},
-        {"range": f"{mid // 10000}-{high // 10000} 萬", "level": "主力", "share": 45},
-        {"range": f"{high // 10000} 萬以上", "level": "高標", "share": 20},
+        {"range": f"{low // 10000}-{mid // 10000} 萬", "level": "保守", "share": 50},
+        {"range": f"{mid // 10000}-{high // 10000} 萬", "level": "基準", "share": 75},
+        {"range": f"{high // 10000} 萬以上", "level": "高標", "share": 100},
     ]
 
 
 def estimate_ticket_module(stores: list[dict], business_type: str) -> dict:
     price_levels = [store["price_level"] for store in stores if store.get("price_level") is not None]
-    if price_levels:
-        avg_level = sum(price_levels) / len(price_levels)
-    else:
-        avg_level = default_price_level(business_type)
+    if not price_levels:
+        return unavailable_ticket_module()
+    avg_level = sum(price_levels) / len(price_levels)
     if avg_level <= 1.3:
-        ranges = [{"range": "80 元以下", "share": 35}, {"range": "80-120 元", "share": 45}, {"range": "120 元以上", "share": 20}]
+        ranges = [{"range": "約 80-120 元", "share": 45}]
         position = "平價走量"
     elif avg_level <= 2.2:
-        ranges = [{"range": "100 元以下", "share": 20}, {"range": "100-180 元", "share": 55}, {"range": "180 元以上", "share": 25}]
+        ranges = [{"range": "約 100-180 元", "share": 70}]
         position = "中價位主流"
     else:
-        ranges = [{"range": "180 元以下", "share": 20}, {"range": "180-300 元", "share": 45}, {"range": "300 元以上", "share": 35}]
+        ranges = [{"range": "約 180-300 元以上", "share": 90}]
         position = "中高價位"
     return {
         "position": position,
         "distribution": ranges,
-        "basis": "以 Google Places 價位等級與業態預設價格帶推估；需菜單或 POS 資料校正。",
+        "basis": f"依 {len(price_levels)} 間同業的 Google Places 價位等級推估；非實際交易分布，需菜單或 POS 校正。",
     }
-
-
-def default_price_level(business_type: str) -> float:
-    text = business_type.lower()
-    if any(word in text for word in ("便當", "早餐", "飲料", "炸雞")):
-        return 1.2
-    if any(word in text for word in ("火鍋", "燒肉", "餐酒")):
-        return 2.5
-    return 1.8
 
 
 def summarize_review_signals(top_competitors: list[dict]) -> dict:
     if not top_competitors:
         return {
-            "positive": ["尚無足夠競品評論資料。"],
-            "negative": ["需接 Google Place Details 評論文字後才能整理真實痛點。"],
-            "data_status": "待接評論資料",
+            "positive": [],
+            "negative": [],
+            "data_status": "未找到可摘要的競品評論",
         }
     positives = [
         summary
@@ -318,14 +417,12 @@ def summarize_review_signals(top_competitors: list[dict]) -> dict:
     strong_names = "、".join(item["name"] for item in top_competitors[:3])
     return {
         "positive": [
-            f"前三名競品為 {strong_names}，可先追蹤其高評分原因。",
-            "若接入評論文字，可整理口味、份量、速度、服務、環境等好評關鍵字。",
+            f"已定位前三名競品：{strong_names}；目前沒有足夠評論文字可判定好評主題。",
         ],
         "negative": [
-            "目前尚未接入評論文字，不能直接判定真實差評內容。",
-            "建議下一步接 Google Place Details reviews，抓排隊、出餐慢、價格、份量、服務態度等痛點。",
+            "目前沒有足夠低分評論文字，不能判定真實差評內容。",
         ],
-        "data_status": "可定位競品，評論文字待接",
+        "data_status": "競品已定位，評論文字不足",
     }
 
 
@@ -347,13 +444,3 @@ def competitor_risk(store: dict) -> str:
     if total >= 500:
         return "評論量高，代表已有穩定客群，正面競爭壓力較大。"
     return "需補評論文字判斷顧客痛點。"
-
-
-def build_conclusion(business_type: str, density: str, count: int, top_competitors: list[dict]) -> str:
-    if count == 0:
-        return f"目前查無明確{business_type}同業資料，不能直接判斷可開，需補資料或擴大半徑。"
-    if density == "高":
-        return f"該區{business_type}同業密度高，市場需求存在，但必須靠產品差異、速度與價格帶切入。"
-    if top_competitors:
-        return f"該區有可參考競品且同業密度{density}，適合作為初步觀察點，下一步應補評論與尖峰人流。"
-    return f"該區{business_type}競爭密度{density}，可列入候選點，但資料完整度仍需補強。"

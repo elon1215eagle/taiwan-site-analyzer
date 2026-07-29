@@ -17,7 +17,7 @@ from .models import EvidenceStatus, GeoScope, RestaurantMarketFetch, RestaurantR
 from .nearby import build_maps_url
 from .utils import haversine_km, normalize_text
 
-ANALYSIS_VERSION = "market-evidence-v1"
+ANALYSIS_VERSION = "market-evidence-v2"
 STATUS_LABELS: dict[EvidenceStatus, str] = {
     "acquired": "已取得",
     "confirmed_zero": "已確認零筆",
@@ -398,6 +398,8 @@ def store_to_dict(scope: GeoScope, record: RestaurantRecord) -> dict:
         "address": record.address,
         "category": record.category,
         "status": record.status,
+        "_lat": record.lat,
+        "_lon": record.lon,
         "distance_km": round(distance_km, 2) if distance_km is not None else None,
         "place_id": record.place_id,
         "rating": record.rating,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-MARKET_REPORT_CONTRACT_VERSION = "market-report-v1"
+MARKET_REPORT_CONTRACT_VERSION = "market-report-v2"
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,23 @@ class ReviewSummary:
 
 
 @dataclass(frozen=True)
+class MarketMapPoint:
+    name: str
+    kind: str
+    x: float
+    y: float
+
+
+@dataclass(frozen=True)
+class MarketMap:
+    status: str
+    source: str
+    center_label: str
+    point_count: int
+    points: list[MarketMapPoint]
+
+
+@dataclass(frozen=True)
 class MarketReportContract:
     analysis_id: str
     analyzed_at: str
@@ -78,6 +95,7 @@ class MarketReportContract:
     geo_scope: dict[str, Any]
     evidence_status: dict[str, Any]
     summary: MarketSummary
+    market_map: MarketMap
     revenue_performance: RevenuePerformance
     monthly_revenue_distribution: list[DistributionItem]
     average_ticket_distribution: TicketDistribution
@@ -105,6 +123,7 @@ def validate_market_report(payload: dict[str, Any]) -> None:
         "geo_scope",
         "evidence_status",
         "summary",
+        "market_map",
         "revenue_performance",
         "monthly_revenue_distribution",
         "average_ticket_distribution",
@@ -128,6 +147,16 @@ def validate_market_report(payload: dict[str, Any]) -> None:
     ticket = payload["average_ticket_distribution"]
     if not ticket["available"] and ticket["distribution"]:
         raise ValueError("market_report_unavailable_ticket_must_be_empty")
+    market_map = payload["market_map"]
+    if market_map["point_count"] != len(market_map["points"]):
+        raise ValueError("market_report_map_point_count_mismatch")
+    if any(
+        item["kind"] not in {"direct", "adjacent"}
+        or not 0 <= item["x"] <= 100
+        or not 0 <= item["y"] <= 100
+        for item in market_map["points"]
+    ):
+        raise ValueError("market_report_invalid_map_point")
     valid_levels = {"直接競品", "鄰近競品"}
     if any(item["competitor_level"] not in valid_levels for item in payload["top_competitors"]):
         raise ValueError("market_report_invalid_competitor_level")
