@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-import json
 from statistics import median
-from urllib.parse import urlencode
-from urllib.request import urlopen
 
 from .analysis import SiteSelectionAnalyzer
-from .nearby import nearby_stores
+from .market_contract import (
+    Competitor,
+    DistributionItem,
+    MarketReportContract,
+    MarketSummary,
+    RevenuePerformance,
+    ReviewSummary,
+    TicketDistribution,
+)
+from .market_evidence import MarketEvidenceCollector, MarketEvidenceSnapshot
 
 
 def build_market_report(
@@ -14,15 +20,30 @@ def build_market_report(
     location: str,
     business_type: str,
     radius_km: float = 0.8,
+    evidence_collector: MarketEvidenceCollector | None = None,
 ) -> dict:
-    all_food = nearby_stores(analyzer, location, radius_km, "", 80)
-    same_type = nearby_stores(analyzer, location, radius_km, business_type, 40)
-    stores = same_type["stores"]
-    top_competitors = rank_competitors(stores)[:3]
-    enrich_competitor_reviews(top_competitors, analyzer.config.google_maps_api_key)
-    market_density = density_level(len(stores), radius_km)
-    revenue = estimate_revenue_module(stores, market_density)
-    ticket = estimate_ticket_module(stores, business_type)
+    snapshot = (evidence_collector or MarketEvidenceCollector(analyzer)).collect(
+        location,
+        business_type,
+        radius_km,
+    )
+    top_competitors = build_competitor_cards(snapshot)
+    if snapshot.restaurant_numbers_available:
+        stores = snapshot.direct_competitors
+        same_type_count: int | None = len(stores)
+        all_food_count: int | None = len(snapshot.all_stores)
+        market_density = density_level(len(stores), snapshot.radius_km)
+        revenue = estimate_revenue_module(stores, market_density)
+        ticket = estimate_ticket_module(stores, business_type)
+        monthly_distribution = build_distribution(revenue["estimated_monthly_revenue_range"])
+    else:
+        stores = []
+        same_type_count = None
+        all_food_count = None
+        market_density = "資料不足"
+        revenue = unavailable_revenue_module()
+        ticket = unavailable_ticket_module()
+        monthly_distribution = []
     reviews = summarize_review_signals(top_competitors)
 
     missing = []
@@ -31,31 +52,45 @@ def build_market_report(
     if not any(store.get("price_level") is not None for store in stores):
         missing.append("Google Places 價位等級或菜單價格")
     missing.append("真實 POS / iCHEF 月營收")
-    if not any(item.get("review_positive") or item.get("review_negative") for item in top_competitors):
+    if snapshot.evidence["reviews"]["status"] in ("partial", "failed"):
         missing.append("Google Place Details 評論文字")
 
-    conclusion = build_conclusion(business_type, market_density, len(stores), top_competitors)
-    return {
-        "input_location": location,
-        "business_type": business_type,
-        "radius_km": radius_km,
-        "geo_scope": same_type["geo_scope"],
-        "summary": {
-            "title": f"{same_type['geo_scope'].get('county', '')}{same_type['geo_scope'].get('district', '')} {business_type} 開店分析",
-            "conclusion": conclusion,
-            "same_type_count": len(stores),
-            "all_food_count": all_food["store_count"],
-            "density_level": market_density,
-            "data_status": "可初判，營收與評論文字需接資料後升級",
+    conclusion = build_snapshot_conclusion(snapshot, market_density, top_competitors)
+    report = MarketReportContract(
+        analysis_id=snapshot.analysis_id,
+        analyzed_at=snapshot.analyzed_at,
+        analysis_version=snapshot.analysis_version,
+        analysis_elapsed_ms=snapshot.elapsed_ms,
+        input_location=location,
+        business_type=business_type,
+        radius_km=snapshot.radius_km,
+        geo_scope=snapshot.geo_scope,
+        evidence_status={
+            "status": snapshot.overall_status,
+            "sources": snapshot.evidence,
         },
-        "revenue_performance": revenue,
-        "monthly_revenue_distribution": build_distribution(revenue["estimated_monthly_revenue_range"]),
-        "average_ticket_distribution": ticket,
-        "top_competitors": top_competitors,
-        "review_summary": reviews,
-        "data_requirements": missing,
-        "warnings": same_type["warnings"],
-    }
+        summary=MarketSummary(
+            title=f"{snapshot.geo_scope.get('county', '')}{snapshot.geo_scope.get('district', '')} {business_type} 開店分析",
+            conclusion=conclusion,
+            same_type_count=same_type_count,
+            all_food_count=all_food_count,
+            density_level=market_density,
+            data_status=snapshot_status_text(snapshot),
+        ),
+        revenue_performance=RevenuePerformance(**revenue),
+        monthly_revenue_distribution=[DistributionItem(**item) for item in monthly_distribution],
+        average_ticket_distribution=TicketDistribution(
+            position=ticket["position"],
+            distribution=[DistributionItem(**item) for item in ticket["distribution"]],
+            basis=ticket["basis"],
+            available=ticket.get("available", True),
+        ),
+        top_competitors=[Competitor(**item) for item in top_competitors],
+        review_summary=ReviewSummary(**reviews),
+        data_requirements=missing,
+        warnings=snapshot.warnings,
+    )
+    return report.to_dict()
 
 
 def build_market_report_text(result: dict) -> str:
@@ -69,8 +104,8 @@ def build_market_report_text(result: dict) -> str:
         f"結論：{result['summary']['conclusion']}",
         "",
         "重點數據：",
-        f"- 同類店家：{result['summary']['same_type_count']} 間",
-        f"- 餐飲總店數：{result['summary']['all_food_count']} 間",
+        f"- 同類店家：{display_count(result['summary']['same_type_count'])}",
+        f"- 餐飲總店數：{display_count(result['summary']['all_food_count'])}",
         f"- 競爭密度：{result['summary']['density_level']}",
         f"- 營收機會：{result['revenue_performance']['opportunity_level']}",
         "",
@@ -80,7 +115,9 @@ def build_market_report_text(result: dict) -> str:
         for item in result["top_competitors"]:
             rating = item["rating"] if item["rating"] is not None else "未取得"
             count = item["user_ratings_total"] if item["user_ratings_total"] is not None else "未取得"
-            lines.append(f"{item['rank']}. {item['name']}｜評分 {rating}｜評論 {count}")
+            lines.append(
+                f"{item['rank']}. {item['name']}｜{item['competitor_level']}｜評分 {rating}｜評論 {count}"
+            )
     else:
         lines.append("- 查無足夠同類店家資料")
     lines.extend(["", "待接資料："])
@@ -88,67 +125,79 @@ def build_market_report_text(result: dict) -> str:
     return "\n".join(lines)
 
 
-def rank_competitors(stores: list[dict]) -> list[dict]:
-    def score(store: dict) -> float:
-        rating = store.get("rating") or 0
-        reviews = store.get("user_ratings_total") or 0
-        distance = store.get("distance_km")
-        distance_bonus = 20 if distance is None else max(0, 20 - distance * 10)
-        return rating * 20 + min(reviews, 1000) / 20 + distance_bonus
-
-    ranked = sorted(stores, key=score, reverse=True)
-    result = []
-    for index, store in enumerate(ranked, start=1):
-        result.append(
-            {
-                "rank": index,
-                "name": store["name"],
-                "address": store["address"],
-                "category": store["category"],
-                "distance_km": store["distance_km"],
-                "rating": store.get("rating"),
-                "user_ratings_total": store.get("user_ratings_total"),
-                "price_level": store.get("price_level"),
-                "place_id": store.get("place_id", ""),
-                "maps_url": store.get("maps_url", ""),
-                "strength": competitor_strength(store),
-                "risk": competitor_risk(store),
-            }
-        )
-    return result
-
-
-def enrich_competitor_reviews(competitors: list[dict], api_key: str | None) -> None:
-    if not api_key:
-        return
-    for item in competitors:
-        reviews = fetch_place_reviews(item.get("place_id", ""), api_key)
+def build_competitor_cards(snapshot: MarketEvidenceSnapshot) -> list[dict]:
+    cards = []
+    for item in snapshot.top_competitors:
+        reviews = item.get("_reviews", [])
         positive = [review for review in reviews if review.get("rating", 0) >= 4]
         negative = [review for review in reviews if review.get("rating", 0) <= 3]
-        item["review_positive"] = summarize_reviews(positive, "positive")
-        item["review_negative"] = summarize_reviews(negative, "negative")
-
-
-def fetch_place_reviews(place_id: str, api_key: str) -> list[dict]:
-    if not place_id:
-        return []
-    params = urlencode(
-        {
-            "place_id": place_id,
-            "fields": "reviews",
-            "language": "zh-TW",
-            "key": api_key,
+        card = {
+            "rank": item["rank"],
+            "name": item["name"],
+            "address": item["address"],
+            "category": item["category"],
+            "competitor_level": item["competitor_level"],
+            "distance_km": item["distance_km"],
+            "rating": item.get("rating"),
+            "user_ratings_total": item.get("user_ratings_total"),
+            "price_level": item.get("price_level"),
+            "place_id": item.get("place_id", ""),
+            "maps_url": item.get("maps_url", ""),
+            "strength": competitor_strength(item),
+            "risk": competitor_risk(item),
+            "review_positive": summarize_reviews(positive, "positive"),
+            "review_negative": summarize_reviews(negative, "negative"),
         }
+        cards.append(card)
+    return cards
+
+
+def unavailable_revenue_module() -> dict:
+    return {
+        "opportunity_level": "資料不足",
+        "estimated_monthly_revenue_range": [],
+        "basis": "市場證據未完整取得，本次不產生營收推估。",
+        "data_status": "部分取得或取得失敗",
+        "available": False,
+    }
+
+
+def unavailable_ticket_module() -> dict:
+    return {
+        "position": "資料不足",
+        "distribution": [],
+        "basis": "市場證據未完整取得，本次不產生客單價分布。",
+        "available": False,
+    }
+
+
+def build_snapshot_conclusion(
+    snapshot: MarketEvidenceSnapshot,
+    density: str,
+    top_competitors: list[dict],
+) -> str:
+    if not snapshot.restaurant_numbers_available:
+        return "市場證據未完整取得，本次僅提供可追溯的部分報告，不做營收或競爭數字判斷。"
+    return build_conclusion(
+        snapshot.business_type,
+        density,
+        len(snapshot.direct_competitors),
+        top_competitors,
     )
-    url = f"https://maps.googleapis.com/maps/api/place/details/json?{params}"
-    try:
-        with urlopen(url, timeout=8) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return []
-    if payload.get("status") != "OK":
-        return []
-    return payload.get("result", {}).get("reviews", []) or []
+
+
+def snapshot_status_text(snapshot: MarketEvidenceSnapshot) -> str:
+    labels = {
+        "acquired": "市場證據已取得，可進行初步判斷",
+        "confirmed_zero": "資料來源已確認零筆",
+        "partial": "市場證據部分取得，僅顯示可確認內容",
+        "failed": "市場證據取得失敗，不產生推估數字",
+    }
+    return labels[snapshot.overall_status]
+
+
+def display_count(value: int | None) -> str:
+    return "資料不足" if value is None else f"{value} 間"
 
 
 def summarize_reviews(reviews: list[dict], mode: str) -> list[str]:

@@ -4,6 +4,7 @@ import csv
 import json
 import ssl
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 from urllib.request import Request, urlopen
@@ -11,7 +12,7 @@ from urllib.parse import urlencode
 from urllib.error import URLError
 
 from .config import AnalyzerConfig
-from .models import GeoScope, RestaurantRecord, TrafficRecord
+from .models import GeoScope, RestaurantFetch, RestaurantRecord, TrafficRecord
 from .utils import haversine_km, normalize_text
 
 TDX_CITY_CODES = {
@@ -75,11 +76,29 @@ FOOD_PLACE_TYPES = (
 
 
 class RestaurantDataSource:
+    source_name = "restaurant_source"
+
     def nearby(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         raise NotImplementedError
 
+    def is_configured(self) -> bool:
+        return True
+
+    def nearby_evidence(self, scope: GeoScope, radius_km: float) -> RestaurantFetch:
+        retrieved_at = utc_now()
+        if not self.is_configured():
+            return RestaurantFetch([], "failed", self.source_name, retrieved_at, "not_configured")
+        try:
+            records = self.nearby(scope, radius_km)
+        except Exception as error:
+            return RestaurantFetch([], "failed", self.source_name, retrieved_at, type(error).__name__)
+        status = "acquired" if records else "confirmed_zero"
+        return RestaurantFetch(records, status, self.source_name, retrieved_at)
+
 
 class CSVRestaurantDataSource(RestaurantDataSource):
+    source_name = "local_restaurant_csv"
+
     def __init__(self, csv_path: str | None):
         self.csv_path = Path(csv_path) if csv_path else None
         self.records = list(self._load()) if self.csv_path and self.csv_path.exists() else []
@@ -102,6 +121,9 @@ class CSVRestaurantDataSource(RestaurantDataSource):
             elif record.district and scope.district:
                 matched.append(record)
         return matched
+
+    def is_configured(self) -> bool:
+        return bool(self.csv_path and self.csv_path.exists())
 
     def _load(self) -> Iterable[RestaurantRecord]:
         assert self.csv_path is not None
@@ -126,35 +148,58 @@ class TrafficDataSource:
 
 
 class CompositeRestaurantDataSource(RestaurantDataSource):
+    source_name = "composite_restaurant_source"
+
     def __init__(self, sources: list[RestaurantDataSource]):
         self.sources = sources
 
     def nearby(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
+        return self.nearby_evidence(scope, radius_km).records
+
+    def is_configured(self) -> bool:
+        return any(source.is_configured() for source in self.sources)
+
+    def nearby_evidence(self, scope: GeoScope, radius_km: float) -> RestaurantFetch:
         records: list[RestaurantRecord] = []
         seen: set[tuple[str, str]] = set()
-        for source in self.sources:
-            for record in source.nearby(scope, radius_km):
+        results = [source.nearby_evidence(scope, radius_km) for source in self.sources if source.is_configured()]
+        if not results:
+            return RestaurantFetch([], "failed", self.source_name, utc_now(), "not_configured")
+        for result in results:
+            for record in result.records:
                 key = (record.name.strip().lower(), record.address.strip().lower())
                 if key in seen:
                     continue
                 seen.add(key)
                 records.append(record)
-        return records
+        failed = any(result.status in ("failed", "partial") for result in results)
+        if records:
+            status = "partial" if failed else "acquired"
+        elif failed:
+            status = "partial" if any(result.status == "confirmed_zero" for result in results) else "failed"
+        else:
+            status = "confirmed_zero"
+        error_type = "upstream_partial" if failed else None
+        sources = "+".join(result.source for result in results)
+        retrieved_at = max(result.retrieved_at for result in results)
+        return RestaurantFetch(records, status, sources, retrieved_at, error_type)
 
 
 class GooglePlacesRestaurantDataSource(RestaurantDataSource):
+    source_name = "google_places"
+
     def __init__(self, api_key: str | None):
         self.api_key = api_key
 
     def nearby(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
-        if not self.api_key or scope.lat is None or scope.lon is None:
-            return []
-        return dedupe_restaurants(
-            [
-                *self._nearby_new(scope, radius_km),
-                *self._nearby_legacy(scope, radius_km),
-            ]
-        )
+        if not self.api_key:
+            raise RuntimeError("google_places_not_configured")
+        if scope.lat is None or scope.lon is None:
+            raise RuntimeError("coordinates_unavailable")
+        return dedupe_restaurants(self._nearby_new(scope, radius_km))
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
 
     def _nearby_new(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         body = {
@@ -181,8 +226,8 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
         try:
             with urlopen(request, timeout=10) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except Exception:
-            return []
+        except Exception as error:
+            raise RuntimeError("google_places_request_failed") from error
         records = []
         for place in payload.get("places", []):
             location = place.get("location", {})
@@ -441,6 +486,10 @@ def parse_google_price_level(value: object) -> int | None:
         }
         return mapping.get(value)
     return parse_int(value)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def tdx_row_to_record(row: dict, scope: GeoScope) -> TrafficRecord | None:

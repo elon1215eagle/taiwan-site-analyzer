@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 Level = Literal["high", "medium", "low"]
 ChineseLevel = Literal["高", "中", "低"]
+EvidenceStatus = Literal["acquired", "confirmed_zero", "partial", "failed"]
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,15 @@ class RestaurantRecord:
     user_ratings_total: int | None = None
     price_level: int | None = None
     reviews: list[dict[str, str | int | float]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RestaurantFetch:
+    records: list[RestaurantRecord]
+    status: EvidenceStatus
+    source: str
+    retrieved_at: str
+    error_type: str | None = None
 
 
 @dataclass(frozen=True)

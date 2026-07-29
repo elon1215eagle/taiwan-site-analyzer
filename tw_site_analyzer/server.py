@@ -8,17 +8,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from .analysis import SiteSelectionAnalyzer, public_json
-from .market_report import build_market_report, build_market_report_text
-from .nearby import build_nearby_report, nearby_stores
-from .recommendation import build_reverse_report, recommend_locations
-from .report import build_chinese_report
+from .application import SiteAnalyzerApplication
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_mobile"
 
 
 class SiteAnalyzerHandler(BaseHTTPRequestHandler):
-    analyzer = SiteSelectionAnalyzer()
+    application = SiteAnalyzerApplication()
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -29,7 +25,7 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/api/health":
-            self._send_json({"ok": True, "service": "taiwan-site-selection-analyzer"})
+            self._send_json(self.application.health())
             return
         requested = self.path.split("?", 1)[0]
         if requested in ("", "/"):
@@ -53,55 +49,20 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_POST(self) -> None:
-        if self.path not in ("/api/analyze", "/api/recommend", "/api/nearby", "/api/market-report"):
-            self.send_error(404)
-            return
         length = int(self.headers.get("Content-Length", "0"))
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
         except json.JSONDecodeError:
             self._send_json({"error": "INVALID_JSON", "message": "Request body must be JSON."}, 400)
             return
-        if self.path == "/api/recommend":
-            business_type = str(body.get("business_type", "")).strip()
-            county = str(body.get("county", "")).strip()
-            district = str(body.get("district", "")).strip()
-            if not business_type or not county:
-                self._send_json({"error": "RECOMMEND_INPUT_REQUIRED", "message": "請輸入業態與縣市。"}, 400)
-                return
-            result = public_json(recommend_locations(self.analyzer, business_type, county, district))
-            self._send_json({"report": build_reverse_report(result), "json": result})
+        if not isinstance(body, dict):
+            self._send_json({"error": "INVALID_JSON_OBJECT", "message": "Request body must be a JSON object."}, 400)
             return
-        if self.path == "/api/nearby":
-            location = str(body.get("location", "")).strip()
-            keyword = str(body.get("keyword", "")).strip()
-            radius_km = body.get("radius_km", 0.8)
-            limit = body.get("limit", 40)
-            if not location:
-                self._send_json({"error": "LOCATION_REQUIRED", "message": "請輸入查詢地址或地標。"}, 400)
-                return
-            result = public_json(nearby_stores(self.analyzer, location, radius_km, keyword, limit))
-            self._send_json({"report": build_nearby_report(result), "json": result})
-            return
-        if self.path == "/api/market-report":
-            location = str(body.get("location", "")).strip()
-            business_type = str(body.get("business_type", "")).strip()
-            radius_km = body.get("radius_km", 0.8)
-            if not location or not business_type:
-                self._send_json({"error": "MARKET_REPORT_INPUT_REQUIRED", "message": "請輸入地址與業態。"}, 400)
-                return
-            result = public_json(build_market_report(self.analyzer, location, business_type, radius_km))
-            self._send_json({"report": build_market_report_text(result), "json": result})
-            return
-        location = str(body.get("location", "")).strip()
-        if not location:
-            self._send_json({"error": "LOCATION_REQUIRED", "message": "請輸入縣市、行政區、路段或地標。"}, 400)
-            return
-        result = public_json(self.analyzer.analyze(location))
-        self._send_json({"report": build_chinese_report(result), "json": result})
+        response = self.application.execute(self.path, body)
+        self._send_json(response.payload, response.status_code)
 
     def log_message(self, format: str, *args) -> None:
-        print(f"[site-analyzer] {self.address_string()} - {format % args}")
+        print(f"[site-analyzer] {format % args}")
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

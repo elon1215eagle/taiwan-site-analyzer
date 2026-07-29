@@ -11,6 +11,25 @@
 - 車潮分析：car、motorcycle 分數 0-100。
 - 餐飲競爭：附近 1km、2km、3km 店家數、類型分布、密度與競爭等級。
 - 資料不足時會清楚標示「推估值」，並在 `warnings` 與 `assumptions` 說明推估邏輯。
+- 開店找點報告：營收表現、月營收分布、客單價分布、前三名競品及好評/差評摘要。
+- 市場證據快照：每次分析只解析一次地址並取得一次店家證據，區分已取得、零筆、部分取得與取得失敗。
+- 可追溯契約：每份市場報告包含分析識別碼、分析版本、契約版本、來源與取得時間。
+
+## 架構邊界
+
+- `market_evidence.py`：集中外部市場證據、12 秒截止、競品分層與評論取得。
+- `market_contract.py`：集中 `market-report-v1` JSON 契約與輸出驗證。
+- `application.py`：集中端點驗證、分析執行與應用錯誤契約。
+- `server.py`：只負責 HTTP 收送與靜態檔案。
+- `observability.py`：提供部署版本、依賴 readiness、請求統計與最近一次市場報告狀態。
+
+部署健康檢查：
+
+```text
+GET /api/health
+```
+
+健康回應不包含 API 金鑰、完整地址或可識別使用者的資訊。
 
 ## 快速使用
 
@@ -112,7 +131,7 @@ $env:TW_TRAFFIC_VD_JSON="C:\data\tdx_vd_snapshot.json"
 ## 測試
 
 ```powershell
-python -m pytest
+python -B -m unittest discover -s tests
 ```
 
 ## 反向選址推薦 API
