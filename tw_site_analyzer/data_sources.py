@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from urllib.error import URLError
 
 from .config import AnalyzerConfig
-from .models import GeoScope, RestaurantFetch, RestaurantRecord, TrafficRecord
+from .models import EvidenceStatus, GeoScope, RestaurantFetch, RestaurantMarketFetch, RestaurantRecord, TrafficRecord
 from .utils import haversine_km, normalize_text
 
 TDX_CITY_CODES = {
@@ -53,6 +53,7 @@ FOOD_PLACE_TYPES = (
     "breakfast_restaurant",
     "brunch_restaurant",
     "fast_food_restaurant",
+    "fried_chicken_restaurant",
     "hamburger_restaurant",
     "pizza_restaurant",
     "sandwich_shop",
@@ -94,6 +95,25 @@ class RestaurantDataSource:
             return RestaurantFetch([], "failed", self.source_name, retrieved_at, type(error).__name__)
         status = "acquired" if records else "confirmed_zero"
         return RestaurantFetch(records, status, self.source_name, retrieved_at)
+
+    def market_evidence(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+    ) -> RestaurantMarketFetch:
+        nearby = self.nearby_evidence(scope, radius_km)
+        direct = [record for record in nearby.records if record_matches_business(record, business_type)]
+        direct_status = nearby.status if nearby.status in ("partial", "failed") else ("acquired" if direct else "confirmed_zero")
+        return RestaurantMarketFetch(
+            all_records=nearby.records,
+            direct_records=direct,
+            status=nearby.status,
+            direct_status=direct_status,
+            source=nearby.source,
+            retrieved_at=nearby.retrieved_at,
+            error_type=nearby.error_type,
+        )
 
 
 class CSVRestaurantDataSource(RestaurantDataSource):
@@ -184,6 +204,42 @@ class CompositeRestaurantDataSource(RestaurantDataSource):
         retrieved_at = max(result.retrieved_at for result in results)
         return RestaurantFetch(records, status, sources, retrieved_at, error_type)
 
+    def market_evidence(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+    ) -> RestaurantMarketFetch:
+        results = [
+            source.market_evidence(scope, radius_km, business_type)
+            for source in self.sources
+            if source.is_configured()
+        ]
+        if not results:
+            return RestaurantMarketFetch(
+                [], [], "failed", "failed", self.source_name, utc_now(), "not_configured"
+            )
+        all_records = dedupe_restaurants(record for result in results for record in result.all_records)
+        direct_records = dedupe_restaurants(record for result in results for record in result.direct_records)
+        status = combine_source_statuses([result.status for result in results], bool(all_records))
+        direct_status = combine_source_statuses(
+            [result.direct_status for result in results],
+            bool(direct_records),
+        )
+        has_failure = any(
+            result.status in ("partial", "failed") or result.direct_status in ("partial", "failed")
+            for result in results
+        )
+        return RestaurantMarketFetch(
+            all_records=all_records,
+            direct_records=direct_records,
+            status=status,
+            direct_status=direct_status,
+            source="+".join(result.source for result in results),
+            retrieved_at=max(result.retrieved_at for result in results),
+            error_type="upstream_partial" if has_failure else None,
+        )
+
 
 class GooglePlacesRestaurantDataSource(RestaurantDataSource):
     source_name = "google_places"
@@ -200,6 +256,35 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
+
+    def market_evidence(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+    ) -> RestaurantMarketFetch:
+        retrieved_at = utc_now()
+        general = self.nearby_evidence(scope, radius_km)
+        try:
+            direct_records = self._text_search_new(scope, radius_km, business_type)
+            direct_status = "acquired" if direct_records else "confirmed_zero"
+            direct_error = None
+        except Exception as error:
+            direct_records = []
+            direct_status = "failed"
+            direct_error = type(error).__name__
+        all_records = dedupe_restaurants([*general.records, *direct_records])
+        status = combine_source_statuses([general.status, direct_status], bool(all_records))
+        errors = [value for value in (general.error_type, direct_error) if value]
+        return RestaurantMarketFetch(
+            all_records=all_records,
+            direct_records=direct_records,
+            status=status,
+            direct_status=direct_status,
+            source=self.source_name,
+            retrieved_at=retrieved_at,
+            error_type="+".join(errors) if errors else None,
+        )
 
     def _nearby_new(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         body = {
@@ -224,34 +309,53 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
             method="POST",
         )
         try:
-            with urlopen(request, timeout=10) as response:
+            with urlopen(request, timeout=5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except Exception as error:
             raise RuntimeError("google_places_request_failed") from error
-        records = []
-        for place in payload.get("places", []):
-            location = place.get("location", {})
-            types = place.get("types", [])
-            category = pick_food_category(types)
-            if not category:
-                continue
-            records.append(
-                RestaurantRecord(
-                    name=place.get("displayName", {}).get("text", "未命名店家"),
-                    address=place.get("formattedAddress", ""),
-                    county=scope.county,
-                    district=scope.district,
-                    category=category,
-                    status=place.get("businessStatus", ""),
-                    lat=parse_float(location.get("latitude")),
-                    lon=parse_float(location.get("longitude")),
-                    place_id=str(place.get("id") or ""),
-                    rating=parse_float(place.get("rating")),
-                    user_ratings_total=parse_int(place.get("userRatingCount")),
-                    price_level=parse_google_price_level(place.get("priceLevel")),
-                )
-            )
-        return records
+        return parse_new_places(payload, scope)
+
+    def _text_search_new(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+    ) -> list[RestaurantRecord]:
+        if not self.api_key:
+            raise RuntimeError("google_places_not_configured")
+        if scope.lat is None or scope.lon is None:
+            raise RuntimeError("coordinates_unavailable")
+        body = {
+            "textQuery": business_type,
+            "pageSize": 20,
+            "languageCode": "zh-TW",
+            "regionCode": "TW",
+            "rankPreference": "DISTANCE",
+            "includedType": "restaurant",
+            "strictTypeFiltering": True,
+            "locationBias": {
+                "circle": {
+                    "center": {"latitude": scope.lat, "longitude": scope.lon},
+                    "radius": min(radius_km * 1000, 50000),
+                }
+            },
+        }
+        request = Request(
+            "https://places.googleapis.com/v1/places:searchText",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": self.api_key,
+                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types,places.location,places.businessStatus,places.rating,places.userRatingCount,places.priceLevel",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception as error:
+            raise RuntimeError("google_places_text_search_failed") from error
+        return parse_new_places(payload, scope)
 
     def _nearby_legacy(self, scope: GeoScope, radius_km: float) -> list[RestaurantRecord]:
         records = []
@@ -490,6 +594,49 @@ def parse_google_price_level(value: object) -> int | None:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def record_matches_business(record: RestaurantRecord, business_type: str) -> bool:
+    keyword = normalize_text(business_type).lower()
+    haystack = normalize_text(f"{record.name} {record.category}").lower()
+    return bool(keyword and keyword in haystack)
+
+
+def combine_source_statuses(statuses: list[EvidenceStatus], has_records: bool) -> EvidenceStatus:
+    has_failure = any(status in ("partial", "failed") for status in statuses)
+    has_reliable = any(status in ("acquired", "confirmed_zero") for status in statuses)
+    if has_failure:
+        return "partial" if has_records or has_reliable else "failed"
+    if has_records:
+        return "acquired"
+    return "confirmed_zero"
+
+
+def parse_new_places(payload: dict, scope: GeoScope) -> list[RestaurantRecord]:
+    records = []
+    for place in payload.get("places", []):
+        location = place.get("location", {})
+        types = place.get("types", [])
+        category = pick_food_category(types)
+        if not category:
+            continue
+        records.append(
+            RestaurantRecord(
+                name=place.get("displayName", {}).get("text", "未命名店家"),
+                address=place.get("formattedAddress", ""),
+                county=scope.county,
+                district=scope.district,
+                category=category,
+                status=place.get("businessStatus", ""),
+                lat=parse_float(location.get("latitude")),
+                lon=parse_float(location.get("longitude")),
+                place_id=str(place.get("id") or ""),
+                rating=parse_float(place.get("rating")),
+                user_ratings_total=parse_int(place.get("userRatingCount")),
+                price_level=parse_google_price_level(place.get("priceLevel")),
+            )
+        )
+    return records
 
 
 def tdx_row_to_record(row: dict, scope: GeoScope) -> TrafficRecord | None:

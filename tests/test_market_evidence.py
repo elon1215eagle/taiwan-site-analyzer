@@ -9,7 +9,7 @@ from tw_site_analyzer.config import AnalyzerConfig
 from tw_site_analyzer.data_sources import RestaurantDataSource
 from tw_site_analyzer.market_evidence import MarketEvidenceCollector, PlaceReviewSource
 from tw_site_analyzer.market_report import build_market_report
-from tw_site_analyzer.models import GeoScope, RestaurantFetch, RestaurantRecord
+from tw_site_analyzer.models import GeoScope, RestaurantFetch, RestaurantMarketFetch, RestaurantRecord
 
 
 class CountingGeocoder:
@@ -47,6 +47,28 @@ class SlowRestaurantSource(CountingRestaurantSource):
         self.calls += 1
         time.sleep(0.1)
         return self.records
+
+
+class ExplicitMarketSource(CountingRestaurantSource):
+    def __init__(self, all_records: list[RestaurantRecord], direct_records: list[RestaurantRecord]):
+        super().__init__(all_records)
+        self.direct_records = direct_records
+
+    def market_evidence(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+    ) -> RestaurantMarketFetch:
+        self.calls += 1
+        return RestaurantMarketFetch(
+            self.records,
+            self.direct_records,
+            "acquired",
+            "acquired",
+            self.source_name,
+            "2026-07-30T00:00:00+00:00",
+        )
 
 
 class FakeReviewSource(PlaceReviewSource):
@@ -191,6 +213,28 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertEqual(result["evidence_status"]["sources"]["reviews"]["status"], "partial")
         self.assertIsInstance(result["summary"]["same_type_count"], int)
         self.assertTrue(result["monthly_revenue_distribution"])
+
+    def test_explicit_business_search_marks_direct_competitor(self):
+        direct = restaurant("KFC 建工店", "fast_food_restaurant", "kfc-1", 4.4, 900)
+        adjacent = restaurant("街角便當", "便當店", "adjacent-1", 4.5, 500)
+        source = ExplicitMarketSource([direct, adjacent], [direct])
+        analyzer = SiteSelectionAnalyzer(
+            config=AnalyzerConfig(),
+            geocoder=self.geocoder,
+            restaurant_source=source,
+        )
+        result = build_market_report(
+            analyzer,
+            "高雄市三民區建工路",
+            "炸雞",
+            evidence_collector=MarketEvidenceCollector(analyzer, review_source=self.review_source, budget_seconds=1),
+        )
+
+        self.assertEqual(source.calls, 1)
+        self.assertEqual(result["summary"]["same_type_count"], 1)
+        self.assertEqual(result["top_competitors"][0]["name"], "KFC 建工店")
+        self.assertEqual(result["top_competitors"][0]["competitor_level"], "直接競品")
+        self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["direct_status"], "acquired")
 
     def test_timeout_is_reported_as_failure_without_fake_numbers(self):
         source = SlowRestaurantSource(self.restaurant_source.records)

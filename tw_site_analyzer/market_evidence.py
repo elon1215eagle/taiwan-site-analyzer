@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from .analysis import SiteSelectionAnalyzer
 from .cleaning import active_restaurants
-from .models import EvidenceStatus, GeoScope, RestaurantFetch, RestaurantRecord
+from .models import EvidenceStatus, GeoScope, RestaurantMarketFetch, RestaurantRecord
 from .nearby import build_maps_url
 from .utils import haversine_km, normalize_text
 
@@ -140,18 +140,32 @@ class MarketEvidenceCollector:
         warnings: list[str] = []
 
         scope, geocoding = self._collect_geocoding(location, deadline)
-        restaurant_fetch = self._collect_restaurants(scope, radius_km, deadline)
+        restaurant_fetch = self._collect_restaurants(scope, radius_km, business_type, deadline)
         restaurant_evidence = evidence_payload(
             restaurant_fetch.status,
             restaurant_fetch.source,
             restaurant_fetch.retrieved_at,
             restaurant_fetch.error_type,
         )
+        restaurant_evidence["direct_status"] = restaurant_fetch.direct_status
+        restaurant_evidence["direct_status_label"] = STATUS_LABELS[restaurant_fetch.direct_status]
 
-        records = active_restaurants(restaurant_fetch.records)
-        stores = [store_to_dict(scope, record) for record in records]
+        records = active_restaurants(restaurant_fetch.all_records)
+        stores = [
+            store_to_dict(scope, record)
+            for record in records
+            if record_within_radius(scope, record, radius_km)
+        ]
         stores.sort(key=lambda item: item["distance_km"] if item["distance_km"] is not None else 999999)
-        direct, adjacent = classify_competitors(stores, business_type)
+        direct_by_classification, _ = classify_competitors(stores, business_type)
+        source_direct_keys = {
+            store_key(store_to_dict(scope, record))
+            for record in active_restaurants(restaurant_fetch.direct_records)
+            if record_within_radius(scope, record, radius_km)
+        }
+        direct_keys = source_direct_keys | {store_key(store) for store in direct_by_classification}
+        direct = [store for store in stores if store_key(store) in direct_keys]
+        adjacent = [store for store in stores if store_key(store) not in direct_keys]
         ranked_direct = rank_store_evidence(direct)
         ranked_adjacent = rank_store_evidence(adjacent)
         top_competitors = [
@@ -232,17 +246,27 @@ class MarketEvidenceCollector:
             source = f"internal_{scope.precision}"
         return scope, evidence_payload(status, source, retrieved_at)
 
-    def _collect_restaurants(self, scope: GeoScope, radius_km: float, deadline: float) -> RestaurantFetch:
+    def _collect_restaurants(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+        deadline: float,
+    ) -> RestaurantMarketFetch:
         retrieved_at = self.now().isoformat()
         try:
             return run_with_deadline(
-                lambda: self.analyzer.restaurant_source.nearby_evidence(scope, radius_km),
+                lambda: self.analyzer.restaurant_source.market_evidence(scope, radius_km, business_type),
                 deadline,
             )
         except TimeoutError:
-            return RestaurantFetch([], "failed", "restaurant_source", retrieved_at, "timeout")
+            return RestaurantMarketFetch(
+                [], [], "failed", "failed", "restaurant_source", retrieved_at, "timeout"
+            )
         except Exception as error:
-            return RestaurantFetch([], "failed", "restaurant_source", retrieved_at, type(error).__name__)
+            return RestaurantMarketFetch(
+                [], [], "failed", "failed", "restaurant_source", retrieved_at, type(error).__name__
+            )
 
     def _collect_reviews(self, competitors: list[dict], deadline: float) -> ReviewFetch:
         retrieved_at = self.now().isoformat()
@@ -381,6 +405,19 @@ def store_to_dict(scope: GeoScope, record: RestaurantRecord) -> dict:
         "price_level": record.price_level,
         "maps_url": build_maps_url(record.name, record.address),
     }
+
+
+def record_within_radius(scope: GeoScope, record: RestaurantRecord, radius_km: float) -> bool:
+    if scope.lat is None or scope.lon is None or record.lat is None or record.lon is None:
+        return True
+    return haversine_km(scope.lat, scope.lon, record.lat, record.lon) <= radius_km
+
+
+def store_key(store: dict) -> str:
+    place_id = str(store.get("place_id") or "").strip()
+    if place_id:
+        return f"place:{place_id}"
+    return f"text:{normalize_text(store.get('name', '')).lower()}|{normalize_text(store.get('address', '')).lower()}"
 
 
 def classify_competitors(stores: list[dict], business_type: str) -> tuple[list[dict], list[dict]]:

@@ -45,6 +45,17 @@ class RestaurantFetch:
 
 
 @dataclass(frozen=True)
+class RestaurantMarketFetch:
+    all_records: list[RestaurantRecord]
+    direct_records: list[RestaurantRecord]
+    status: EvidenceStatus
+    direct_status: EvidenceStatus
+    source: str
+    retrieved_at: str
+    error_type: str | None = None
+
+
+@dataclass(frozen=True)
 class TrafficRecord:
     lat: float
     lon: float
