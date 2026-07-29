@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from .analysis import SiteSelectionAnalyzer
 from .cleaning import active_restaurants
-from .models import EvidenceStatus, GeoScope, RestaurantMarketFetch, RestaurantRecord
+from .models import EvidenceStatus, GeoScope, RestaurantMarketFetch, RestaurantRecord, TrafficRecord
 from .nearby import build_maps_url
 from .utils import haversine_km, normalize_text
 
@@ -106,6 +106,7 @@ class MarketEvidenceSnapshot:
     direct_competitors: list[dict]
     adjacent_competitors: list[dict]
     top_competitors: list[dict]
+    traffic_records: list[dict]
     evidence: dict
     overall_status: EvidenceStatus
     warnings: list[str]
@@ -140,7 +141,12 @@ class MarketEvidenceCollector:
         warnings: list[str] = []
 
         scope, geocoding = self._collect_geocoding(location, deadline)
-        restaurant_fetch = self._collect_restaurants(scope, radius_km, business_type, deadline)
+        restaurant_fetch, traffic_records, traffic_evidence = self._collect_market_sources(
+            scope,
+            radius_km,
+            business_type,
+            deadline,
+        )
         restaurant_evidence = evidence_payload(
             restaurant_fetch.status,
             restaurant_fetch.source,
@@ -192,11 +198,13 @@ class MarketEvidenceCollector:
             "geocoding": geocoding,
             "restaurants": restaurant_evidence,
             "reviews": review_evidence,
+            "traffic": traffic_evidence,
         }
         overall_status = combine_statuses(
             geocoding["status"],
             restaurant_evidence["status"],
             review_evidence["status"],
+            traffic_evidence["status"],
         )
         if restaurant_fetch.status == "partial":
             warnings.append("餐廳市場證據僅部分取得，營收與競爭數字暫不產生。")
@@ -204,6 +212,8 @@ class MarketEvidenceCollector:
             warnings.append("餐廳市場證據取得失敗，營收與競爭數字暫不產生。")
         if review_fetch.status in ("partial", "failed"):
             warnings.append("評論證據未完整取得，僅顯示已確認內容。")
+        if traffic_evidence["status"] in ("partial", "failed"):
+            warnings.append("TDX 道路車流證據未完整取得，不產生車流推估。")
         if time.monotonic() >= deadline:
             warnings.append("分析已達 12 秒上限，結果以部分報告提供。")
 
@@ -219,6 +229,7 @@ class MarketEvidenceCollector:
             direct_competitors=ranked_direct,
             adjacent_competitors=ranked_adjacent,
             top_competitors=enriched_competitors,
+            traffic_records=[traffic_to_dict(record) for record in traffic_records],
             evidence=evidence,
             overall_status=overall_status,
             warnings=warnings,
@@ -267,6 +278,72 @@ class MarketEvidenceCollector:
             return RestaurantMarketFetch(
                 [], [], "failed", "failed", "restaurant_source", retrieved_at, type(error).__name__
             )
+
+    def _collect_market_sources(
+        self,
+        scope: GeoScope,
+        radius_km: float,
+        business_type: str,
+        deadline: float,
+    ) -> tuple[RestaurantMarketFetch, list[TrafficRecord], dict]:
+        results: Queue = Queue(maxsize=2)
+        operations = {
+            "restaurants": lambda: self._collect_restaurants(
+                scope, radius_km, business_type, deadline
+            ),
+            "traffic": lambda: self._collect_traffic(scope, deadline),
+        }
+        for name, operation in operations.items():
+            Thread(
+                target=run_named_into_queue,
+                args=(results, name, operation),
+                daemon=True,
+                name=f"gdo-market-{name}",
+            ).start()
+
+        collected = {}
+        while len(collected) < len(operations):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                name, value, error = results.get(timeout=remaining)
+            except Empty:
+                break
+            if error is None:
+                collected[name] = value
+
+        retrieved_at = self.now().isoformat()
+        restaurant_fetch = collected.get("restaurants") or RestaurantMarketFetch(
+            [], [], "failed", "failed", "restaurant_source", retrieved_at, "timeout"
+        )
+        traffic_records, traffic_evidence = collected.get("traffic") or (
+            [],
+            evidence_payload("failed", "traffic_source", retrieved_at, "timeout"),
+        )
+        return restaurant_fetch, traffic_records, traffic_evidence
+
+    def _collect_traffic(self, scope: GeoScope, deadline: float) -> tuple[list[TrafficRecord], dict]:
+        retrieved_at = self.now().isoformat()
+        source = getattr(self.analyzer.traffic_source, "source_name", "traffic_source")
+        if not self.analyzer.traffic_source.is_configured():
+            return [], evidence_payload("failed", source, retrieved_at, "not_configured")
+        try:
+            records = run_with_deadline(
+                lambda: self.analyzer.traffic_source.nearest(scope, limit=5),
+                deadline,
+            )
+        except TimeoutError:
+            return [], evidence_payload("failed", source, retrieved_at, "timeout")
+        except Exception as error:
+            return [], evidence_payload("failed", source, retrieved_at, type(error).__name__)
+        status: EvidenceStatus = "acquired" if records else "confirmed_zero"
+        record_sources = sorted({record.source for record in records if record.source})
+        return records, evidence_payload(
+            status,
+            "+".join(record_sources) or source,
+            retrieved_at,
+        )
 
     def _collect_reviews(self, competitors: list[dict], deadline: float) -> ReviewFetch:
         retrieved_at = self.now().isoformat()
@@ -349,6 +426,17 @@ def run_into_queue(result: Queue, operation: Callable[[], T]) -> None:
         result.put((False, error))
 
 
+def run_named_into_queue(
+    result: Queue,
+    name: str,
+    operation: Callable[[], object],
+) -> None:
+    try:
+        result.put((name, operation(), None))
+    except Exception as error:
+        result.put((name, None, error))
+
+
 def fetch_review_into_queue(
     result: Queue,
     source: PlaceReviewSource,
@@ -406,6 +494,19 @@ def store_to_dict(scope: GeoScope, record: RestaurantRecord) -> dict:
         "user_ratings_total": record.user_ratings_total,
         "price_level": record.price_level,
         "maps_url": build_maps_url(record.name, record.address),
+    }
+
+
+def traffic_to_dict(record: TrafficRecord) -> dict:
+    return {
+        "lat": record.lat,
+        "lon": record.lon,
+        "car_flow": record.car_flow,
+        "motorcycle_flow": record.motorcycle_flow,
+        "speed": record.speed,
+        "timestamp": record.timestamp,
+        "source": record.source,
+        "distance_km": round(record.distance_km, 2) if record.distance_km is not None else None,
     }
 
 

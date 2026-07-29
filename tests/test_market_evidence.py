@@ -6,10 +6,16 @@ from datetime import datetime, timezone
 
 from tw_site_analyzer.analysis import SiteSelectionAnalyzer, public_json
 from tw_site_analyzer.config import AnalyzerConfig
-from tw_site_analyzer.data_sources import RestaurantDataSource
+from tw_site_analyzer.data_sources import RestaurantDataSource, TrafficDataSource
 from tw_site_analyzer.market_evidence import MarketEvidenceCollector, PlaceReviewSource
 from tw_site_analyzer.market_report import build_market_report
-from tw_site_analyzer.models import GeoScope, RestaurantFetch, RestaurantMarketFetch, RestaurantRecord
+from tw_site_analyzer.models import (
+    GeoScope,
+    RestaurantFetch,
+    RestaurantMarketFetch,
+    RestaurantRecord,
+    TrafficRecord,
+)
 
 
 class CountingGeocoder:
@@ -87,6 +93,18 @@ class ExplicitMarketSource(CountingRestaurantSource):
             self.source_name,
             "2026-07-30T00:00:00+00:00",
         )
+
+
+class FakeTrafficSource(TrafficDataSource):
+    source_name = "test_tdx_vd"
+
+    def __init__(self, records: list[TrafficRecord] | None = None):
+        self.records = records or []
+        self.calls = 0
+
+    def nearest(self, scope: GeoScope, limit: int = 5) -> list[TrafficRecord]:
+        self.calls += 1
+        return self.records[:limit]
 
 
 class FakeReviewSource(PlaceReviewSource):
@@ -174,7 +192,7 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertEqual(set(self.review_source.calls), {"direct-1", "direct-2", "adjacent-1"})
         self.assertEqual(result["analysis_id"], "analysis-test-001")
         self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["status"], "acquired")
-        self.assertEqual(result["contract_version"], "market-report-v2")
+        self.assertEqual(result["contract_version"], "market-report-v3")
         self.assertEqual(result["market_map"]["status"], "acquired")
         self.assertEqual(result["market_map"]["point_count"], 3)
         self.assertEqual([item["competitor_level"] for item in result["top_competitors"]], ["直接競品", "直接競品", "鄰近競品"])
@@ -359,6 +377,53 @@ class MarketEvidenceTest(unittest.TestCase):
 
         self.assertFalse(result["average_ticket_distribution"]["available"])
         self.assertEqual(result["average_ticket_distribution"]["distribution"], [])
+
+    def test_tdx_vehicle_flow_is_included_without_claiming_pedestrian_flow(self):
+        traffic_source = FakeTrafficSource(
+            [
+                TrafficRecord(
+                    lat=22.651,
+                    lon=120.321,
+                    car_flow=120,
+                    motorcycle_flow=80,
+                    speed=35,
+                    timestamp="2026-07-30T08:00:00+08:00",
+                    source="TDX_VD",
+                    distance_km=0.18,
+                ),
+                TrafficRecord(
+                    lat=22.652,
+                    lon=120.322,
+                    car_flow=180,
+                    motorcycle_flow=120,
+                    speed=45,
+                    timestamp="2026-07-30T08:05:00+08:00",
+                    source="TDX_VD",
+                    distance_km=0.31,
+                ),
+            ]
+        )
+        analyzer = SiteSelectionAnalyzer(
+            config=AnalyzerConfig(),
+            geocoder=self.geocoder,
+            restaurant_source=self.restaurant_source,
+            traffic_source=traffic_source,
+        )
+        result = build_market_report(
+            analyzer,
+            "高雄市三民區建工路",
+            "炸雞",
+            evidence_collector=MarketEvidenceCollector(
+                analyzer, review_source=self.review_source, budget_seconds=1
+            ),
+        )
+
+        self.assertEqual(traffic_source.calls, 1)
+        self.assertTrue(result["road_traffic"]["available"])
+        self.assertEqual(result["road_traffic"]["average_car_flow"], 150)
+        self.assertEqual(result["road_traffic"]["average_motorcycle_flow"], 100)
+        self.assertEqual(result["road_traffic"]["nearest_station_distance_km"], 0.18)
+        self.assertIn("不代表行人流量", result["road_traffic"]["interpretation"])
 
 
 if __name__ == "__main__":

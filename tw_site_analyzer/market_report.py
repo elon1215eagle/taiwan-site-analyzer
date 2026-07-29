@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from math import cos, radians
-from statistics import median
+from statistics import mean, median
 
 from .analysis import SiteSelectionAnalyzer
 from .market_contract import (
@@ -11,6 +11,7 @@ from .market_contract import (
     MarketMapPoint,
     MarketReportContract,
     MarketSummary,
+    RoadTraffic,
     RevenuePerformance,
     ReviewSummary,
     TicketDistribution,
@@ -32,6 +33,7 @@ def build_market_report(
     )
     top_competitors = build_competitor_cards(snapshot)
     market_map = build_market_map(snapshot)
+    road_traffic = build_road_traffic(snapshot)
     if snapshot.restaurant_numbers_available:
         stores = snapshot.direct_competitors
         same_type_count: int | None = len(stores)
@@ -56,6 +58,7 @@ def build_market_report(
     if not any(store.get("price_level") is not None for store in stores):
         missing.append("Google Places 價位等級或菜單價格")
     missing.append("真實 POS / iCHEF 月營收")
+    missing.append("真實行人流量（TDX VD 僅代表道路車流）")
     if snapshot.evidence["reviews"]["status"] in ("partial", "failed"):
         missing.append("Google Place Details 評論文字")
 
@@ -88,6 +91,7 @@ def build_market_report(
             point_count=market_map["point_count"],
             points=[MarketMapPoint(**item) for item in market_map["points"]],
         ),
+        road_traffic=RoadTraffic(**road_traffic),
         revenue_performance=RevenuePerformance(**revenue),
         monthly_revenue_distribution=[DistributionItem(**item) for item in monthly_distribution],
         average_ticket_distribution=TicketDistribution(
@@ -220,6 +224,58 @@ def build_market_map(snapshot: MarketEvidenceSnapshot) -> dict:
         "center_label": center_label,
         "point_count": len(points),
         "points": points,
+    }
+
+
+def build_road_traffic(snapshot: MarketEvidenceSnapshot) -> dict:
+    evidence = snapshot.evidence["traffic"]
+    records = snapshot.traffic_records
+    if evidence["status"] != "acquired" or not records:
+        return {
+            "available": False,
+            "status": evidence["status_label"],
+            "source": evidence["source"],
+            "station_count": 0,
+            "average_car_flow": None,
+            "average_motorcycle_flow": None,
+            "average_speed": None,
+            "nearest_station_distance_km": None,
+            "observed_at": "",
+            "interpretation": "未取得附近 TDX VD 測站資料；不以代理值補算。",
+        }
+
+    car_values = [float(item["car_flow"]) for item in records if item.get("car_flow") is not None]
+    motorcycle_values = [
+        float(item["motorcycle_flow"])
+        for item in records
+        if item.get("motorcycle_flow") is not None
+    ]
+    speed_values = [float(item["speed"]) for item in records if item.get("speed") is not None]
+    distances = [
+        float(item["distance_km"])
+        for item in records
+        if item.get("distance_km") is not None
+    ]
+    observed_at = max((str(item.get("timestamp") or "") for item in records), default="")
+    available_values = []
+    if car_values:
+        available_values.append(f"汽車平均觀測值 {round(mean(car_values), 1):g}")
+    if motorcycle_values:
+        available_values.append(f"機車平均觀測值 {round(mean(motorcycle_values), 1):g}")
+    detail = "、".join(available_values) or "測站未回傳有效流量值"
+    return {
+        "available": bool(car_values or motorcycle_values or speed_values),
+        "status": evidence["status_label"],
+        "source": evidence["source"],
+        "station_count": len(records),
+        "average_car_flow": round(mean(car_values), 1) if car_values else None,
+        "average_motorcycle_flow": round(mean(motorcycle_values), 1) if motorcycle_values else None,
+        "average_speed": round(mean(speed_values), 1) if speed_values else None,
+        "nearest_station_distance_km": round(min(distances), 2) if distances else None,
+        "observed_at": observed_at,
+        "interpretation": (
+            f"附近 {len(records)} 個道路測站：{detail}。此資料代表道路車流，不代表行人流量。"
+        ),
     }
 
 

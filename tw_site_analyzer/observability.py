@@ -9,7 +9,7 @@ from threading import Lock
 from .config import AnalyzerConfig
 
 SERVICE_NAME = "taiwan-site-selection-analyzer"
-SERVICE_VERSION = "2026.07-market-evidence"
+SERVICE_VERSION = "2026.07-market-evidence-v3"
 
 
 @dataclass
@@ -70,6 +70,11 @@ def build_health_report(config: AnalyzerConfig, telemetry: ServiceTelemetry) -> 
         "traffic_json": {
             "configured": bool(config.traffic_vd_json),
             "provides": ["traffic"],
+        },
+        "ichef_pos": {
+            "configured": bool(config.ichef_daily_csv),
+            "intake_schema": "ready",
+            "provides": ["net_sales", "completed_orders", "actual_ticket"],
         },
     }
     restaurant_ready = dependencies["google_maps"]["configured"] or dependencies["restaurant_csv"]["configured"]

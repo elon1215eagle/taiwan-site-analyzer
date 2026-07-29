@@ -324,6 +324,17 @@
         </div>
         <p class="note">${escapeHtml(data.market_map.source)}｜${escapeHtml(data.market_map.center_label)}｜${data.market_map.point_count} 個有效點位</p>
 
+        <h2 class="section-title">道路車流證據</h2>
+        <section class="card">
+          <div class="metrics" style="margin-top:0;">
+            <article class="metric"><span>汽車觀測值</span><strong>${displayMetric(data.road_traffic.average_car_flow)}</strong><small>TDX VD</small></article>
+            <article class="metric"><span>機車觀測值</span><strong>${displayMetric(data.road_traffic.average_motorcycle_flow)}</strong><small>TDX VD</small></article>
+            <article class="metric"><span>平均速度</span><strong>${displayMetric(data.road_traffic.average_speed, " km/h")}</strong><small>${data.road_traffic.station_count} 個測站</small></article>
+            <article class="metric"><span>最近測站</span><strong>${displayMetric(data.road_traffic.nearest_station_distance_km, " km")}</strong><small>${escapeHtml(data.road_traffic.status)}</small></article>
+          </div>
+          <p class="note">${escapeHtml(data.road_traffic.interpretation)}</p>
+        </section>
+
         <h2 class="section-title">營收機會推估</h2>
         <section class="card">
           <p><strong>推估月營收區間：</strong>${revenueRange(data.revenue_performance.estimated_monthly_revenue_range)}</p>
@@ -420,6 +431,10 @@
 
     function displayCount(value) {
       return value === null || value === undefined ? "資料不足" : escapeHtml(value);
+    }
+
+    function displayMetric(value, suffix = "") {
+      return value === null || value === undefined ? "資料不足" : `${escapeHtml(value)}${escapeHtml(suffix)}`;
     }
 
     function revenueRange(range) {

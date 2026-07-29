@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-MARKET_REPORT_CONTRACT_VERSION = "market-report-v2"
+MARKET_REPORT_CONTRACT_VERSION = "market-report-v3"
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,20 @@ class MarketMap:
 
 
 @dataclass(frozen=True)
+class RoadTraffic:
+    available: bool
+    status: str
+    source: str
+    station_count: int
+    average_car_flow: float | None
+    average_motorcycle_flow: float | None
+    average_speed: float | None
+    nearest_station_distance_km: float | None
+    observed_at: str
+    interpretation: str
+
+
+@dataclass(frozen=True)
 class MarketReportContract:
     analysis_id: str
     analyzed_at: str
@@ -96,6 +110,7 @@ class MarketReportContract:
     evidence_status: dict[str, Any]
     summary: MarketSummary
     market_map: MarketMap
+    road_traffic: RoadTraffic
     revenue_performance: RevenuePerformance
     monthly_revenue_distribution: list[DistributionItem]
     average_ticket_distribution: TicketDistribution
@@ -124,6 +139,7 @@ def validate_market_report(payload: dict[str, Any]) -> None:
         "evidence_status",
         "summary",
         "market_map",
+        "road_traffic",
         "revenue_performance",
         "monthly_revenue_distribution",
         "average_ticket_distribution",
@@ -157,6 +173,14 @@ def validate_market_report(payload: dict[str, Any]) -> None:
         for item in market_map["points"]
     ):
         raise ValueError("market_report_invalid_map_point")
+    road_traffic = payload["road_traffic"]
+    traffic_values = (
+        road_traffic["average_car_flow"],
+        road_traffic["average_motorcycle_flow"],
+        road_traffic["average_speed"],
+    )
+    if not road_traffic["available"] and any(value is not None for value in traffic_values):
+        raise ValueError("market_report_unavailable_traffic_must_not_have_values")
     valid_levels = {"直接競品", "鄰近競品"}
     if any(item["competitor_level"] not in valid_levels for item in payload["top_competitors"]):
         raise ValueError("market_report_invalid_competitor_level")

@@ -26,6 +26,7 @@ class AnalyzerConfig:
     tdx_client_id: str | None = None
     tdx_client_secret: str | None = None
     tdx_vd_url: str | None = None
+    ichef_daily_csv: str | None = None
     default_radius_km: float = 3.0
     restaurant_radii_km: tuple[float, float, float] = (1.0, 2.0, 3.0)
 
@@ -39,4 +40,5 @@ class AnalyzerConfig:
             tdx_client_id=os.getenv("TDX_CLIENT_ID"),
             tdx_client_secret=os.getenv("TDX_CLIENT_SECRET"),
             tdx_vd_url=os.getenv("TDX_VD_URL"),
+            ichef_daily_csv=os.getenv("ICHEF_DAILY_CSV"),
         )

@@ -1,4 +1,4 @@
-const CACHE_NAME = "gdo-market-report-v4";
+const CACHE_NAME = "gdo-market-report-v5";
 const APP_SHELL = [
   "/",
   "/index.html",

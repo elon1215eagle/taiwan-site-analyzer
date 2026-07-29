@@ -163,6 +163,11 @@ class CSVRestaurantDataSource(RestaurantDataSource):
 
 
 class TrafficDataSource:
+    source_name = "traffic_source"
+
+    def is_configured(self) -> bool:
+        return True
+
     def nearest(self, scope: GeoScope, limit: int = 5) -> list[TrafficRecord]:
         raise NotImplementedError
 
@@ -407,6 +412,8 @@ class GooglePlacesRestaurantDataSource(RestaurantDataSource):
 
 
 class JSONTrafficDataSource(TrafficDataSource):
+    source_name = "local_vd_json"
+
     def __init__(self, json_path: str | None):
         self.json_path = Path(json_path) if json_path else None
         self.records = list(self._load()) if self.json_path and self.json_path.exists() else []
@@ -419,6 +426,9 @@ class JSONTrafficDataSource(TrafficDataSource):
             distance = haversine_km(scope.lat, scope.lon, record.lat, record.lon)
             enriched.append(TrafficRecord(**{**record.__dict__, "distance_km": distance}))
         return sorted(enriched, key=lambda item: item.distance_km or 999999)[:limit]
+
+    def is_configured(self) -> bool:
+        return bool(self.json_path and self.json_path.exists())
 
     def _load(self) -> Iterable[TrafficRecord]:
         assert self.json_path is not None
@@ -441,17 +451,26 @@ class JSONTrafficDataSource(TrafficDataSource):
 
 
 class CompositeTrafficDataSource(TrafficDataSource):
+    source_name = "composite_traffic_source"
+
     def __init__(self, sources: list[TrafficDataSource]):
         self.sources = sources
 
     def nearest(self, scope: GeoScope, limit: int = 5) -> list[TrafficRecord]:
         records: list[TrafficRecord] = []
         for source in self.sources:
+            if not source.is_configured():
+                continue
             records.extend(source.nearest(scope, limit))
         return sorted(records, key=lambda item: item.distance_km or 999999)[:limit]
 
+    def is_configured(self) -> bool:
+        return any(source.is_configured() for source in self.sources)
+
 
 class TDXTrafficDataSource(TrafficDataSource):
+    source_name = "TDX_VD"
+
     def __init__(self, client_id: str | None, client_secret: str | None, vd_url: str | None):
         self.client_id = client_id
         self.client_secret = client_secret
@@ -479,6 +498,9 @@ class TDXTrafficDataSource(TrafficDataSource):
             rows = static_payload if isinstance(static_payload, list) else static_payload.get("VDs") or []
         records = [record for record in (tdx_row_to_record(row, scope) for row in rows) if record]
         return sorted(records, key=lambda item: item.distance_km or 999999)[:limit]
+
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret)
 
     def _fetch_vd_payloads(self, scope: GeoScope, token: str) -> tuple[dict | list | None, dict | list | None]:
         if self.vd_url:
