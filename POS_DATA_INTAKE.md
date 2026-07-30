@@ -1,8 +1,8 @@
-# iCHEF 日營運資料接入規格
+# POS／門市日營運資料接入規格
 
 ## 目的
 
-將 LAIGDO 自有門市的 iCHEF 營業資料轉為 GDO 可驗證的日資料，用於真實營收、實際訂單客單價及相似門市基準。不得混入其他公司或品牌資料。
+將 LAIGDO 自有門市的 POS 匯出檔、關帳表或每日營運報表轉為 GDO 可驗證的日資料，用於真實營收、實際訂單客單價及相似門市基準。不得混入其他公司或品牌資料。
 
 ## 必要欄位
 
@@ -20,10 +20,10 @@
 ## 驗證方式
 
 ```powershell
-python -m tw_site_analyzer.pos_data C:\path\to\normalized_ichef_daily_sales.csv
+python -m tw_site_analyzer.pos_data C:\path\to\normalized_pos_daily_sales.csv
 ```
 
-正式資料可使用英文欄名，也支援「門市代碼、門市名稱、營業日、業態、營業淨額、完成訂單數」等中文欄名。
+正式資料可使用英文欄名，也支援「門市代碼、門市名稱、營業日、業態、營業淨額、完成訂單數」等中文欄名，不限定 POS 品牌。
 
 ## 資料治理
 

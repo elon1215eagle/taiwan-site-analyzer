@@ -47,6 +47,8 @@ class ApplicationTest(unittest.TestCase):
         self.assertEqual(health["service"], SERVICE_NAME)
         self.assertLessEqual({"deployment", "capabilities", "dependencies", "runtime"}, set(health))
         self.assertNotIn("api_key", str(health).lower())
+        self.assertEqual(health["dependencies"]["pos_daily"]["intake_schema"], "ready")
+        self.assertNotIn("ichef", str(health).lower())
         self.assertGreaterEqual(health["runtime"]["requests_total"], 0)
 
     def test_health_tracks_last_market_report(self):

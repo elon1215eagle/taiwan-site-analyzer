@@ -11,7 +11,7 @@ class PosDataTest(unittest.TestCase):
     def write_csv(self, content: str) -> Path:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        path = Path(directory.name) / "ichef.csv"
+        path = Path(directory.name) / "pos_daily.csv"
         path.write_text(content, encoding="utf-8-sig")
         return path
 

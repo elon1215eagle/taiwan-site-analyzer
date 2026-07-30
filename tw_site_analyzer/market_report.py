@@ -57,7 +57,7 @@ def build_market_report(
         missing.append("Google Places 評分與評論數")
     if not any(store.get("price_level") is not None for store in stores):
         missing.append("Google Places 價位等級或菜單價格")
-    missing.append("真實 POS / iCHEF 月營收")
+    missing.append("真實 POS／門市日營運資料")
     missing.append("真實行人流量（TDX VD 僅代表道路車流）")
     if snapshot.evidence["reviews"]["status"] in ("partial", "failed"):
         missing.append("Google Place Details 評論文字")

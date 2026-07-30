@@ -71,8 +71,8 @@ def build_health_report(config: AnalyzerConfig, telemetry: ServiceTelemetry) -> 
             "configured": bool(config.traffic_vd_json),
             "provides": ["traffic"],
         },
-        "ichef_pos": {
-            "configured": bool(config.ichef_daily_csv),
+        "pos_daily": {
+            "configured": bool(config.pos_daily_csv),
             "intake_schema": "ready",
             "provides": ["net_sales", "completed_orders", "actual_ticket"],
         },

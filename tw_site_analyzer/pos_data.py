@@ -215,7 +215,7 @@ def summarize_dataset(records: list[PosDailyRecord]) -> PosDatasetSummary:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate normalized iCHEF daily sales CSV.")
+    parser = argparse.ArgumentParser(description="Validate normalized POS daily sales CSV.")
     parser.add_argument("csv_path")
     parser.add_argument("--show-records", action="store_true")
     args = parser.parse_args()
