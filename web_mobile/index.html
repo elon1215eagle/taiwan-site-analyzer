@@ -3,461 +3,136 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#12355b">
-  <title>GDO 開店找點 AI 分析</title>
+  <meta name="theme-color" content="#0b3a6f">
+  <title>GDO 選址決策中心</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <style>
-    :root {
-      --bg: #f3f6fa;
-      --surface: #ffffff;
-      --ink: #17243a;
-      --muted: #637083;
-      --line: #dbe2ea;
-      --navy: #12355b;
-      --blue: #1463ff;
-      --blue-soft: #eaf1ff;
-      --red: #d92d20;
-      --red-soft: #fff0ed;
-      --gold: #c78a12;
-      --gold-soft: #fff7df;
-      --orange: #f97316;
-      --orange-soft: #fff1e8;
-      --shadow: 0 10px 28px rgba(18, 53, 91, .09);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif;
-      line-height: 1.58;
-    }
-    button, input, select { font: inherit; }
-    .app { width: min(1040px, 100%); min-height: 100svh; margin: 0 auto; padding-bottom: 40px; }
-    .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: rgba(255,255,255,.97);
-      border-bottom: 1px solid var(--line);
-      border-top: 5px solid var(--navy);
-      backdrop-filter: blur(16px);
-      padding: max(14px, env(safe-area-inset-top)) 22px 14px;
-      box-shadow: 0 4px 18px rgba(18, 53, 91, .06);
-    }
-    .topbar::after {
-      content:"";
-      position:absolute;
-      left:0;
-      right:0;
-      bottom:-1px;
-      height:3px;
-      background:linear-gradient(90deg, var(--blue) 0 35%, var(--red) 35% 55%, var(--gold) 55% 76%, var(--orange) 76%);
-    }
-    .brand-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
-    .brand { display:flex; align-items:center; gap:11px; color:var(--navy); font-size:19px; font-weight:950; }
-    .brand-mark { display:grid; grid-template-columns:repeat(2, 8px); gap:3px; width:19px; height:19px; }
-    .brand-mark i { display:block; width:8px; height:8px; }
-    .brand-mark i:nth-child(1) { background:var(--blue); }
-    .brand-mark i:nth-child(2) { background:var(--red); }
-    .brand-mark i:nth-child(3) { background:var(--gold); }
-    .brand-mark i:nth-child(4) { background:var(--orange); }
-    .brand-mode { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; font-weight:850; }
-    .brand-mode::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 4px var(--orange-soft); }
-    .search-form { display:grid; grid-template-columns:1fr 112px; gap:10px; }
-    .filters { display:grid; grid-template-columns:1fr 132px; gap:10px; margin-top:10px; }
-    input, select {
-      width:100%;
-      height:48px;
-      border:1px solid var(--line);
-      border-radius:6px;
-      background:#fff;
-      color:var(--ink);
-      padding:0 14px;
-      outline:none;
-    }
-    input:focus, select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(20,99,255,.12); }
-    .primary-button {
-      height:48px;
-      border:0;
-      border-radius:6px;
-      background:var(--orange);
-      color:#fff;
-      font-weight:950;
-      cursor:pointer;
-      box-shadow:0 7px 16px rgba(249,115,22,.24);
-    }
-    .primary-button:hover { background:#df5e09; }
-    .quick-list { display:flex; gap:8px; overflow-x:auto; padding:10px 0 0; scrollbar-width:none; }
-    .quick-list::-webkit-scrollbar { display:none; }
-    .quick {
-      flex:0 0 auto;
-      min-height:34px;
-      border:1px solid #cbd9ee;
-      border-radius:999px;
-      background:var(--blue-soft);
-      color:var(--navy);
-      padding:5px 11px;
-      font-size:13px;
-      font-weight:850;
-      cursor:pointer;
-    }
-    .quick:nth-child(2) { border-color:#f0c4bf; background:var(--red-soft); color:#9f2017; }
-    .quick:nth-child(3) { border-color:#ecd49e; background:var(--gold-soft); color:#865b07; }
-    .quick:nth-child(4) { border-color:#f8c9aa; background:var(--orange-soft); color:#a74408; }
-    main { padding:30px 22px 0; }
-    h1 { margin:0 0 8px; color:var(--navy); font-size:34px; line-height:1.18; font-weight:950; letter-spacing:0; }
-    .subtitle { margin:0; color:var(--muted); font-size:17px; }
-    .section-title {
-      display:flex;
-      align-items:center;
-      gap:10px;
-      margin:34px 0 12px;
-      color:var(--navy);
-      font-size:23px;
-      line-height:1.25;
-      font-weight:950;
-    }
-    .section-title::before { content:""; width:5px; height:24px; background:var(--orange); }
-    .card, .insight, .store-card, .empty {
-      border:1px solid var(--line);
-      border-radius:7px;
-      background:var(--surface);
-      box-shadow:var(--shadow);
-    }
-    .insight { position:relative; margin-top:22px; padding:20px 20px 20px 24px; border-left:5px solid var(--blue); }
-    .insight::after { content:"決策摘要"; position:absolute; right:16px; top:14px; color:#8d5f08; background:var(--gold-soft); padding:3px 8px; border-radius:999px; font-size:11px; font-weight:900; }
-    .insight strong { display:block; max-width:80%; color:var(--navy); font-size:20px; line-height:1.45; margin-bottom:7px; }
-    .insight p, .empty p { margin:0; color:#424856; font-size:16px; }
-    .empty { padding:18px 20px; border-left:4px solid var(--gold); }
-    .metrics { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin-top:16px; }
-    .metric { padding:17px; min-height:132px; border-top:4px solid var(--blue); }
-    .metric:nth-child(2) { border-top-color:var(--red); }
-    .metric:nth-child(3) { border-top-color:var(--gold); }
-    .metric:nth-child(4) { border-top-color:var(--orange); }
-    .metric span { display:block; font-size:15px; font-weight:900; color:#3d4350; }
-    .metric strong { display:block; margin-top:10px; color:var(--navy); font-size:29px; line-height:1.15; font-weight:950; overflow-wrap:anywhere; }
-    .metric:nth-child(2) strong { color:var(--red); }
-    .metric:nth-child(3) strong { color:#9b6a0a; }
-    .metric:nth-child(4) strong { color:#c44f08; }
-    .metric small { color:var(--muted); font-size:13px; }
-    .map-box {
-      position:relative;
-      height:340px;
-      margin-top:18px;
-      overflow:hidden;
-      border:1px solid var(--line);
-      border-radius:7px;
-      background:
-        linear-gradient(90deg, transparent 0 22%, rgba(151,166,184,.28) 22% 23%, transparent 23% 58%, rgba(151,166,184,.28) 58% 59%, transparent 59%),
-        linear-gradient(0deg, transparent 0 30%, rgba(151,166,184,.28) 30% 31%, transparent 31% 64%, rgba(151,166,184,.28) 64% 65%, transparent 65%),
-        #e9eef4;
-    }
-    .dot { position:absolute; width:18px; height:18px; border-radius:50%; background:rgba(20,99,255,.7); border:2px solid rgba(255,255,255,.86); }
-    .dot.highlight { width:20px; height:20px; background:var(--red); }
-    .map-unavailable { position:absolute; inset:0; display:grid; place-items:center; padding:24px; color:var(--muted); font-weight:850; text-align:center; }
-    .center-pin { position:absolute; left:50%; top:45%; width:54px; height:54px; border-radius:50% 50% 50% 8px; background:var(--orange); transform:translate(-50%,-50%) rotate(-45deg); box-shadow:0 10px 22px rgba(249,115,22,.34); z-index:3; }
-    .center-pin::after { content:""; position:absolute; left:16px; top:16px; width:18px; height:18px; border-radius:50%; border:4px solid rgba(255,255,255,.9); }
-    .legend { position:absolute; left:16px; bottom:16px; z-index:4; display:grid; gap:10px; min-width:168px; padding:14px 16px; border-radius:8px; background:rgba(255,255,255,.95); box-shadow:0 10px 24px rgba(39,44,72,.13); font-weight:900; }
-    .legend-item { display:flex; align-items:center; gap:10px; }
-    .swatch { width:16px; height:16px; border-radius:50%; background:rgba(20,99,255,.7); }
-    .swatch.accent { background:var(--red); }
-    .bars { display:grid; gap:10px; }
-    .bar-row { display:grid; grid-template-columns:92px 1fr; align-items:center; gap:10px; font-size:14px; color:#424856; }
-    .bar-track { height:12px; overflow:hidden; border-radius:999px; background:#e9eef4; }
-    .bar-fill { height:100%; border-radius:999px; background:var(--blue); }
-    .bar-row:nth-child(2n) .bar-fill { background:var(--gold); }
-    .bar-row:nth-child(3n) .bar-fill { background:var(--orange); }
-    .store-list { display:grid; gap:10px; }
-    .store-card { padding:14px; }
-    .store-card h3 { margin:0 0 7px; font-size:18px; line-height:1.35; }
-    .meta { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:8px; }
-    .tag { border-radius:999px; background:var(--blue-soft); color:var(--navy); padding:3px 8px; font-size:12px; font-weight:850; }
-    .tag:first-child { background:var(--gold-soft); color:#7c5407; }
-    .store-card p, .card p { margin:0 0 8px; color:var(--muted); font-size:14px; }
-    .map-link { color:var(--blue); font-weight:900; text-decoration:none; }
-    .card { padding:16px; }
-    .note { border-left:4px solid var(--gold); padding-left:10px; color:#5d6678; font-size:14px; }
-    .loading, .error { display:none; margin-top:10px; font-size:13px; font-weight:850; }
-    .loading { color:var(--blue); }
-    .error { color:var(--red); }
-    @media (max-width:780px) {
-      .metrics { grid-template-columns:1fr 1fr; }
-    }
-    @media (max-width:520px) {
-      .topbar { padding-left:16px; padding-right:16px; }
-      .brand-mode { display:none; }
-      main { padding:24px 16px 0; }
-      h1 { font-size:28px; }
-      .metrics { grid-template-columns:1fr; }
-      .map-box { height:320px; }
-      .insight strong { max-width:100%; padding-top:28px; }
-    }
-  </style>
+  <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <div class="brand-row">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-          <span>GDO 開店找點 AI 分析</span>
-        </div>
-        <div class="brand-mode">選址決策中心</div>
+  <div id="loginView" class="login-shell">
+    <section class="login-panel" aria-labelledby="loginTitle">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <div><strong>GDO</strong><span>選址決策中心</span></div>
       </div>
-      <form id="reportForm">
-        <div class="search-form">
-          <input id="locationInput" autocomplete="street-address" placeholder="輸入開店地址" value="台北市松山區三民路138巷10號">
-          <button class="primary-button" type="submit">分析</button>
-        </div>
-        <div class="filters">
-          <input id="businessInput" placeholder="業態，例如：便當、炸雞、飲料" value="便當">
-          <select id="radiusInput" aria-label="分析半徑">
-            <option value="0.5">500 公尺</option>
-            <option value="0.8" selected>800 公尺</option>
-            <option value="1.0">1 公里</option>
-            <option value="2.0">2 公里</option>
-            <option value="3.0">3 公里</option>
-          </select>
-        </div>
+      <h1 id="loginTitle">登入營運工作台</h1>
+      <form id="loginForm" class="stack">
+        <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
+        <label>密碼<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <button class="button primary" type="submit"><i data-lucide="log-in"></i>登入</button>
       </form>
-      <div class="quick-list" aria-label="快速業態">
-        <button class="quick" type="button" data-business="便當">便當</button>
-        <button class="quick" type="button" data-business="炸雞">炸雞</button>
-        <button class="quick" type="button" data-business="飲料">飲料</button>
-        <button class="quick" type="button" data-business="早餐">早餐</button>
-        <button class="quick" type="button" data-business="火鍋">火鍋</button>
-      </div>
-      <div id="loading" class="loading">正在產生找點分析報告...</div>
-      <div id="error" class="error"></div>
-    </header>
-
-    <main>
-      <h1>開店找點分析</h1>
-      <p class="subtitle">把地址轉成可判斷的營運決策：競品、營收機會、客單價、評論痛點與資料完整度。</p>
-      <section id="empty" class="empty" style="margin-top:20px;"><p>輸入地址與業態後即可產生分析。營收與評論若未接資料，系統會清楚標示為推估或待接。</p></section>
-      <section id="result" hidden></section>
-    </main>
+      <p id="loginError" class="form-error" role="alert"></p>
+      <p class="legal-note">吉多國際餐飲／LAIGDO 內部及加盟展店專用</p>
+    </section>
   </div>
 
-  <script>
-    const form = document.querySelector("#reportForm");
-    const locationInput = document.querySelector("#locationInput");
-    const businessInput = document.querySelector("#businessInput");
-    const radiusInput = document.querySelector("#radiusInput");
-    const resultEl = document.querySelector("#result");
-    const emptyEl = document.querySelector("#empty");
-    const loadingEl = document.querySelector("#loading");
-    const errorEl = document.querySelector("#error");
-    const API_BASE = location.protocol === "file:" ? "http://127.0.0.1:8787" : "";
+  <div id="appView" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand-lockup compact">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <div><strong>GDO</strong><span>選址決策中心</span></div>
+      </div>
+      <nav class="side-nav" aria-label="主要功能">
+        <button class="nav-item active" data-view="address"><i data-lucide="map-pin"></i><span>指定地址分析</span></button>
+        <button class="nav-item" data-view="reverse"><i data-lucide="search"></i><span>反查推薦區域</span></button>
+        <button class="nav-item" data-view="cases"><i data-lucide="folder-kanban"></i><span>選址案件</span></button>
+        <button class="nav-item" data-view="notifications"><i data-lucide="bell"></i><span>站內通知</span><b id="notificationBadge" hidden>0</b></button>
+      </nav>
+      <div class="user-block">
+        <span id="userAvatar">G</span>
+        <div><strong id="userName">使用者</strong><small id="userRole">角色</small></div>
+        <button id="logoutButton" class="icon-button" title="登出" aria-label="登出"><i data-lucide="log-out"></i></button>
+      </div>
+    </aside>
 
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      queryReport();
-    });
-
-    document.querySelectorAll(".quick").forEach((button) => {
-      button.addEventListener("click", () => {
-        businessInput.value = button.dataset.business;
-        queryReport();
-      });
-    });
-
-    if ("serviceWorker" in navigator && location.protocol !== "file:") {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
-    }
-
-    async function queryReport() {
-      const payload = {
-        location: locationInput.value.trim(),
-        business_type: businessInput.value.trim(),
-        radius_km: Number(radiusInput.value)
-      };
-      if (!payload.location || !payload.business_type) {
-        showError("請輸入地址與業態。");
-        return;
-      }
-      setLoading(true);
-      hideError();
-      try {
-        const response = await fetch(`${API_BASE}/api/market-report`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || "分析失敗");
-        renderReport(data.json);
-      } catch (error) {
-        showError(error.message || "分析失敗，請確認後端服務是否啟動。");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    function renderReport(data) {
-      emptyEl.hidden = true;
-      resultEl.hidden = false;
-      resultEl.innerHTML = `
-        <section class="insight">
-          <strong>${escapeHtml(data.summary.conclusion)}</strong>
-          <p>${escapeHtml(data.summary.data_status)}</p>
-        </section>
-
-        <div class="metrics">
-          <article class="card metric"><span>同類店家</span><strong>${displayCount(data.summary.same_type_count)}</strong><small>${data.radius_km} 公里內</small></article>
-          <article class="card metric"><span>餐飲總店數</span><strong>${displayCount(data.summary.all_food_count)}</strong><small>競爭密度：${escapeHtml(data.summary.density_level)}</small></article>
-          <article class="card metric"><span>營收機會</span><strong>${escapeHtml(data.revenue_performance.opportunity_level)}</strong><small>${escapeHtml(data.revenue_performance.data_status)}</small></article>
-          <article class="card metric"><span>客單定位</span><strong>${escapeHtml(data.average_ticket_distribution.position)}</strong><small>需菜單/POS 校正</small></article>
+    <div class="workspace">
+      <header class="mobile-header">
+        <div class="brand-lockup compact">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <div><strong>GDO</strong><span>選址決策中心</span></div>
         </div>
+        <button id="mobileMenuButton" class="icon-button" title="功能選單" aria-label="功能選單"><i data-lucide="menu"></i></button>
+      </header>
 
-        <h2 class="section-title">同業與餐飲分布</h2>
-        <p class="subtitle">以開店地址為中心，依實際店家座標呈現相對位置。</p>
-        <div class="map-box">
-          ${renderDots(data.market_map)}
-          <span class="center-pin"></span>
-          <div class="legend">
-            <div class="legend-item"><span class="swatch accent"></span><span>${escapeHtml(data.business_type)}</span></div>
-            <div class="legend-item"><span class="swatch"></span><span>其他餐飲</span></div>
+      <main>
+        <section id="addressView" class="view active-view">
+          <header class="page-heading">
+            <div><span class="eyebrow">SITE EVIDENCE</span><h1>指定地址分析</h1><p>候選店面市場證據與初篩決策</p></div>
+            <div class="heading-actions">
+              <button id="printButton" class="button secondary" type="button" hidden><i data-lucide="file-down"></i>匯出 PDF</button>
+            </div>
+          </header>
+          <form id="addressForm" class="tool-panel address-form">
+            <label class="wide">候選店面地址<input id="addressInput" autocomplete="street-address" placeholder="縣市、行政區、路段及門牌" required></label>
+            <label>業態<select id="businessSelect" required></select></label>
+            <label>月租金<input id="rentInput" type="number" min="0" inputmode="numeric" placeholder="元"></label>
+            <label>坪數<input id="areaInput" type="number" min="0.1" step="0.1" inputmode="decimal" placeholder="坪"></label>
+            <button class="button primary analyze-button" type="submit"><i data-lucide="scan-search"></i>開始分析</button>
+          </form>
+          <div id="addressState" class="state-panel">
+            <i data-lucide="map-pinned"></i>
+            <strong>尚未產生地址報告</strong>
           </div>
-        </div>
-        <p class="note">${escapeHtml(data.market_map.source)}｜${escapeHtml(data.market_map.center_label)}｜${data.market_map.point_count} 個有效點位</p>
+          <div id="reportResult" hidden></div>
+        </section>
 
-        <h2 class="section-title">道路車流證據</h2>
-        <section class="card">
-          <div class="metrics" style="margin-top:0;">
-            <article class="metric"><span>汽車觀測值</span><strong>${displayMetric(data.road_traffic.average_car_flow)}</strong><small>TDX VD</small></article>
-            <article class="metric"><span>機車觀測值</span><strong>${displayMetric(data.road_traffic.average_motorcycle_flow)}</strong><small>TDX VD</small></article>
-            <article class="metric"><span>平均速度</span><strong>${displayMetric(data.road_traffic.average_speed, " km/h")}</strong><small>${data.road_traffic.station_count} 個測站</small></article>
-            <article class="metric"><span>最近測站</span><strong>${displayMetric(data.road_traffic.nearest_station_distance_km, " km")}</strong><small>${escapeHtml(data.road_traffic.status)}</small></article>
+        <section id="reverseView" class="view">
+          <header class="page-heading">
+            <div><span class="eyebrow">AREA DISCOVERY</span><h1>反查推薦區域</h1><p>先選行政區，再找可定位道路熱點</p></div>
+          </header>
+          <form id="reverseForm" class="tool-panel reverse-form">
+            <label>業態<select id="reverseBusiness" required></select></label>
+            <label>縣市<select id="countySelect" required></select></label>
+            <label>行政區<input id="districtInput" placeholder="第一階段可留白"></label>
+            <button class="button primary" type="submit"><i data-lucide="radar"></i>產生排序</button>
+          </form>
+          <div id="reverseState" class="state-panel">
+            <i data-lucide="route"></i>
+            <strong>尚未產生區域排序</strong>
           </div>
-          <p class="note">${escapeHtml(data.road_traffic.interpretation)}</p>
+          <div id="reverseResult" hidden></div>
         </section>
 
-        <h2 class="section-title">營收機會推估</h2>
-        <section class="card">
-          <p><strong>推估月營收區間：</strong>${revenueRange(data.revenue_performance.estimated_monthly_revenue_range)}</p>
-          <p class="note">${escapeHtml(data.revenue_performance.basis)}</p>
+        <section id="casesView" class="view">
+          <header class="page-heading">
+            <div><span class="eyebrow">CASE CONTROL</span><h1>選址案件</h1><p>候選店面、現勘、比較與送審</p></div>
+            <div class="heading-actions">
+              <button id="accountButton" class="button secondary" type="button" hidden><i data-lucide="users"></i>帳號管理</button>
+              <button id="newCaseButton" class="button primary" type="button"><i data-lucide="folder-plus"></i>建立案件</button>
+            </div>
+          </header>
+          <form id="accountForm" class="tool-panel account-form" hidden>
+            <label>姓名<input id="accountName" required></label>
+            <label>Email<input id="accountEmail" type="email" required></label>
+            <label>角色<select id="accountRole"><option value="franchisee">加盟主</option><option value="developer">區域開發人員</option><option value="admin">總部管理員</option></select></label>
+            <label>初始密碼<input id="accountPassword" type="password" minlength="10" required></label>
+            <button class="button primary" type="submit"><i data-lucide="user-plus"></i>建立帳號</button>
+          </form>
+          <form id="caseForm" class="tool-panel case-form" hidden>
+            <label>案件名稱<input id="caseTitle" required placeholder="例如：高雄三民炸雞展店"></label>
+            <label>業態<select id="caseBusiness" required></select></label>
+            <label>縣市<select id="caseCounty"></select></label>
+            <button class="button primary" type="submit"><i data-lucide="save"></i>儲存案件</button>
+          </form>
+          <div id="caseList" class="case-grid"></div>
+          <div id="caseDetail"></div>
         </section>
 
-        <h2 class="section-title">營收情境比較</h2>
-        <section class="card bars">${data.monthly_revenue_distribution.length ? data.monthly_revenue_distribution.map(barRow).join("") : unavailableMessage()}</section>
-
-        <h2 class="section-title">客單價帶推估</h2>
-        <section class="card bars">
-          <p><strong>${escapeHtml(data.average_ticket_distribution.position)}</strong></p>
-          ${data.average_ticket_distribution.distribution.length ? data.average_ticket_distribution.distribution.map(barRow).join("") : unavailableMessage()}
-          <p class="note">${escapeHtml(data.average_ticket_distribution.basis)}</p>
+        <section id="notificationsView" class="view">
+          <header class="page-heading">
+            <div><span class="eyebrow">INBOX</span><h1>站內通知</h1><p>案件送審、補件、留言與結案</p></div>
+          </header>
+          <div id="notificationList" class="notification-list"></div>
         </section>
+      </main>
+    </div>
+  </div>
 
-        <h2 class="section-title">附近前三名同類店家</h2>
-        <section class="store-list">
-          ${data.top_competitors.length ? data.top_competitors.map(competitorCard).join("") : `<article class="empty"><p>查無足夠同類競品資料。</p></article>`}
-        </section>
+  <div id="busyOverlay" class="busy-overlay" hidden><span class="spinner"></span><strong>正在取得市場證據</strong></div>
+  <div id="toast" class="toast" role="status" hidden></div>
 
-        <h2 class="section-title">好評與差評摘要</h2>
-        <section class="card">
-          <p><strong>好評方向</strong></p>
-          ${data.review_summary.positive.length ? data.review_summary.positive.map(item => `<p>+ ${escapeHtml(item)}</p>`).join("") : `<p class="note">尚無足夠正向評論文字。</p>`}
-          <p><strong>差評/缺口</strong></p>
-          ${data.review_summary.negative.length ? data.review_summary.negative.map(item => `<p>- ${escapeHtml(item)}</p>`).join("") : `<p class="note">尚無足夠低分評論文字。</p>`}
-          <p class="note">${escapeHtml(data.review_summary.data_status)}</p>
-        </section>
-
-        <h2 class="section-title">資料完整度</h2>
-        <section class="card">
-          <p><strong>分析識別碼：</strong>${escapeHtml(data.analysis_id)}</p>
-          <p><strong>分析版本：</strong>${escapeHtml(data.analysis_version)}</p>
-          ${Object.entries(data.evidence_status.sources).map(([name, evidence]) => `<p>${escapeHtml(name)}：${escapeHtml(evidence.status_label)}｜${escapeHtml(evidence.source)}</p>`).join("")}
-          ${data.data_requirements.map(item => `<p>- ${escapeHtml(item)}</p>`).join("")}
-        </section>
-      `;
-    }
-
-    function renderDots(marketMap) {
-      if (!marketMap || marketMap.status !== "acquired" || !marketMap.points.length) {
-        return `<div class="map-unavailable">未取得可定位的店家座標</div>`;
-      }
-      return marketMap.points.map((point) => {
-        const highlight = point.kind === "direct" ? " highlight" : "";
-        return `<span class="dot${highlight}" style="left:${Number(point.x)}%;top:${Number(point.y)}%" title="${escapeHtml(point.name)}"></span>`;
-      }).join("");
-    }
-
-    function barRow(item) {
-      const label = item.range || item.level;
-      const name = item.level || item.range;
-      return `
-        <div class="bar-row">
-          <span>${escapeHtml(name)}</span>
-          <div class="bar-track"><div class="bar-fill" style="width:${Number(item.share) || 0}%"></div></div>
-        </div>
-        <p style="margin-top:-4px;">${escapeHtml(label)}</p>
-      `;
-    }
-
-    function competitorCard(item) {
-      const rating = item.rating ?? "未取得";
-      const reviews = item.user_ratings_total ?? "未取得";
-      const distance = item.distance_km === null || item.distance_km === undefined ? "距離未取得" : `${item.distance_km} km`;
-      return `
-        <article class="store-card">
-          <h3>${item.rank}. ${escapeHtml(item.name)}</h3>
-          <div class="meta">
-            <span class="tag">${escapeHtml(item.competitor_level)}</span>
-            <span class="tag">評分 ${escapeHtml(rating)}</span>
-            <span class="tag">評論 ${escapeHtml(reviews)}</span>
-            <span class="tag">${escapeHtml(distance)}</span>
-          </div>
-          <p>${escapeHtml(item.address || "未提供地址")}</p>
-          <p><strong>優勢：</strong>${escapeHtml(item.strength)}</p>
-          <p><strong>風險：</strong>${escapeHtml(item.risk)}</p>
-          ${reviewLines("好評", item.review_positive)}
-          ${reviewLines("差評/缺口", item.review_negative)}
-          ${item.maps_url ? `<a class="map-link" href="${escapeHtml(item.maps_url)}" target="_blank" rel="noreferrer">開啟地圖</a>` : ""}
-        </article>
-      `;
-    }
-
-    function reviewLines(title, items) {
-      if (!items || !items.length) return "";
-      return `<p><strong>${escapeHtml(title)}：</strong>${items.map(escapeHtml).join("；")}</p>`;
-    }
-
-    function money(value) {
-      return `${Math.round(Number(value) / 10000)} 萬`;
-    }
-
-    function displayCount(value) {
-      return value === null || value === undefined ? "資料不足" : escapeHtml(value);
-    }
-
-    function displayMetric(value, suffix = "") {
-      return value === null || value === undefined ? "資料不足" : `${escapeHtml(value)}${escapeHtml(suffix)}`;
-    }
-
-    function revenueRange(range) {
-      return Array.isArray(range) && range.length === 2
-        ? `${money(range[0])} - ${money(range[1])}`
-        : "資料不足";
-    }
-
-    function unavailableMessage() {
-      return `<p class="note">市場證據未完整取得，本次不產生推估數字。</p>`;
-    }
-
-    function setLoading(isLoading) { loadingEl.style.display = isLoading ? "block" : "none"; }
-    function showError(message) { errorEl.textContent = message; errorEl.style.display = "block"; }
-    function hideError() { errorEl.textContent = ""; errorEl.style.display = "none"; }
-    function escapeHtml(value) {
-      return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-  </script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

@@ -192,10 +192,11 @@ class MarketEvidenceTest(unittest.TestCase):
         self.assertEqual(set(self.review_source.calls), {"direct-1", "direct-2", "adjacent-1"})
         self.assertEqual(result["analysis_id"], "analysis-test-001")
         self.assertEqual(result["evidence_status"]["sources"]["restaurants"]["status"], "acquired")
-        self.assertEqual(result["contract_version"], "market-report-v3")
+        self.assertEqual(result["contract_version"], "market-report-v4")
         self.assertEqual(result["market_map"]["status"], "acquired")
         self.assertEqual(result["market_map"]["point_count"], 3)
-        self.assertEqual([item["competitor_level"] for item in result["top_competitors"]], ["直接競品", "直接競品", "鄰近競品"])
+        self.assertEqual([item["competitor_level"] for item in result["top_competitors"]], ["直接競品", "直接競品"])
+        self.assertEqual([item["competitor_level"] for item in result["adjacent_competitors"]], ["鄰近競品"])
         self.assertNotIn("_reviews", result["top_competitors"][0])
 
     def test_confirmed_zero_is_not_reported_as_failure(self):

@@ -6,7 +6,12 @@ import unittest
 from tw_site_analyzer.analysis import SiteSelectionAnalyzer, flow_to_score, public_json
 from tw_site_analyzer.config import AnalyzerConfig
 from tw_site_analyzer.data_sources import parse_float
-from tw_site_analyzer.recommendation import build_reverse_report, recommend_locations
+from tw_site_analyzer.recommendation import (
+    belongs_to_district,
+    build_reverse_report,
+    extract_road_name,
+    recommend_locations,
+)
 
 
 def assert_no_internal_keys(value, case: unittest.TestCase):
@@ -69,12 +74,37 @@ class SiteAnalyzerTest(unittest.TestCase):
         self.assertGreater(flow_to_score(12, "car"), 20)
 
     def test_reverse_recommendation_returns_ranked_candidates(self):
-        result = public_json(recommend_locations(self.analyzer(), "炸雞", "高雄市", "三民區", limit=3))
+        class FixedPopulation:
+            def districts(self, county):
+                return [
+                    {
+                        "district": "三民區",
+                        "population": 330000,
+                        "source": "test",
+                        "data_as_of": "114 年",
+                    }
+                ]
+
+        result = public_json(
+            recommend_locations(
+                self.analyzer(),
+                "炸雞",
+                "高雄市",
+                "",
+                limit=3,
+                population_source=FixedPopulation(),
+            )
+        )
         self.assertEqual(result["business_type"], "炸雞")
         self.assertLessEqual(len(result["recommendations"]), 3)
         self.assertGreater(len(result["recommendations"]), 0)
         self.assertLessEqual({"rank", "area", "fit_score", "reason", "source_analysis"}, set(result["recommendations"][0]))
         self.assertIn("GDO反向店面選址建議報告", build_reverse_report(result))
+
+    def test_reverse_area_uses_clean_real_road_name_and_district_boundary(self):
+        self.assertEqual(extract_road_name("813高雄市左營區新上里博愛二路777號"), "博愛二路")
+        self.assertTrue(belongs_to_district("高雄市左營區博愛二路", "", "左營區"))
+        self.assertFalse(belongs_to_district("高雄市鼓山區博愛二路", "", "左營區"))
 
 
 if __name__ == "__main__":

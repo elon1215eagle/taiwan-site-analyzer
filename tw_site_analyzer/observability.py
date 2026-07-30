@@ -9,7 +9,7 @@ from threading import Lock
 from .config import AnalyzerConfig
 
 SERVICE_NAME = "taiwan-site-selection-analyzer"
-SERVICE_VERSION = "2026.07-market-evidence-v3"
+SERVICE_VERSION = "2026.07-gdo-site-selection-v4"
 
 
 @dataclass
@@ -71,18 +71,13 @@ def build_health_report(config: AnalyzerConfig, telemetry: ServiceTelemetry) -> 
             "configured": bool(config.traffic_vd_json),
             "provides": ["traffic"],
         },
-        "pos_daily": {
-            "configured": bool(config.pos_daily_csv),
-            "intake_schema": "ready",
-            "provides": ["net_sales", "completed_orders", "actual_ticket"],
-        },
     }
     restaurant_ready = dependencies["google_maps"]["configured"] or dependencies["restaurant_csv"]["configured"]
     traffic_ready = dependencies["tdx"]["configured"] or dependencies["traffic_json"]["configured"]
     capabilities = {
         "market_report": "ready" if restaurant_ready else "degraded",
         "site_analysis": "ready" if restaurant_ready and traffic_ready else "degraded",
-        "reverse_recommendation": "ready",
+        "reverse_recommendation": "ready" if restaurant_ready else "degraded",
     }
     status = "healthy" if all(value == "ready" for value in capabilities.values()) else "degraded"
     return {

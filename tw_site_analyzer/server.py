@@ -9,23 +9,84 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .application import SiteAnalyzerApplication
+from .workspace import (
+    TokenService,
+    WorkspaceError,
+    WorkspaceRepository,
+    WorkspaceUser,
+    bootstrap_admin,
+)
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_mobile"
 
 
 class SiteAnalyzerHandler(BaseHTTPRequestHandler):
     application = SiteAnalyzerApplication()
+    repository = WorkspaceRepository(os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3"))
+    token_service = TokenService(
+        os.getenv("GDO_AUTH_SECRET", "gdo-local-development-secret-change-me")
+    )
+    bootstrap_admin(repository)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self) -> None:
         if self.path == "/api/health":
-            self._send_json(self.application.health())
+            health = self.application.health()
+            database_path = os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3")
+            persistent_database = database_path.startswith("/var/data") or bool(
+                os.getenv("GDO_DATABASE_PERSISTENT")
+            )
+            health["workspace"] = {
+                "authentication": "ready" if os.getenv("GDO_AUTH_SECRET") else "degraded",
+                "admin_bootstrap": (
+                    "ready"
+                    if os.getenv("GDO_ADMIN_EMAIL") and os.getenv("GDO_ADMIN_PASSWORD")
+                    else "degraded"
+                ),
+                "database": "ready" if persistent_database else "ephemeral",
+            }
+            health["ok"] = health["ok"] and all(
+                status == "ready" for status in health["workspace"].values()
+            )
+            if not health["ok"]:
+                health["status"] = "degraded"
+            self._send_json(health)
+            return
+        if self.path == "/api/auth/me":
+            user = self._require_user()
+            if user:
+                self._send_json({"user": user.to_dict()})
+            return
+        if self.path == "/api/workspace/cases":
+            user = self._require_user()
+            if user:
+                self._send_json({"cases": self.repository.list_cases(user)})
+            return
+        if self.path.startswith("/api/workspace/cases/"):
+            user = self._require_user()
+            if not user:
+                return
+            try:
+                case_id = int(self.path.rsplit("/", 1)[-1])
+                self._send_json({"case": self.repository.get_case(user, case_id)})
+            except (ValueError, WorkspaceError) as error:
+                self._send_workspace_error(error)
+            return
+        if self.path == "/api/workspace/notifications":
+            user = self._require_user()
+            if user:
+                self._send_json({"notifications": self.repository.list_notifications(user)})
+            return
+        if self.path == "/api/workspace/users":
+            user = self._require_user()
+            if user:
+                self._workspace_action(lambda: {"users": self.repository.list_users(user)})
             return
         requested = self.path.split("?", 1)[0]
         if requested in ("", "/"):
@@ -58,6 +119,46 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send_json({"error": "INVALID_JSON_OBJECT", "message": "Request body must be a JSON object."}, 400)
             return
+        if self.path == "/api/auth/login":
+            try:
+                user = self.repository.authenticate(
+                    str(body.get("email") or ""),
+                    str(body.get("password") or ""),
+                )
+                self._send_json({"token": self.token_service.issue(user), "user": user.to_dict()})
+            except WorkspaceError as error:
+                self._send_workspace_error(error)
+            return
+        user = self._require_user()
+        if not user:
+            return
+        if self.path == "/api/workspace/cases":
+            self._workspace_action(lambda: {"case": self.repository.create_case(user, body)})
+            return
+        if self.path == "/api/workspace/candidates":
+            self._workspace_action(lambda: {"candidate": self.repository.add_candidate(user, body)})
+            return
+        if self.path == "/api/workspace/candidates/report":
+            self._workspace_action(lambda: {"version": self.repository.add_report_version(user, body)})
+            return
+        if self.path == "/api/workspace/surveys":
+            self._workspace_action(lambda: {"survey": self.repository.add_survey(user, body)})
+            return
+        if self.path == "/api/workspace/review":
+            self._workspace_action(lambda: {"case": self.repository.review_case(user, body)})
+            return
+        if self.path == "/api/workspace/assign":
+            self._workspace_action(lambda: {"case": self.repository.assign_case(user, body)})
+            return
+        if self.path == "/api/workspace/users":
+            self._workspace_action(lambda: {"user": self.repository.create_managed_user(user, body)})
+            return
+        if self.path == "/api/workspace/notifications/read":
+            def read_notification():
+                self.repository.read_notification(user, int(body.get("notification_id") or 0))
+                return {"ok": True}
+            self._workspace_action(read_notification)
+            return
         response = self.application.execute(self.path, body)
         self._send_json(response.payload, response.status_code)
 
@@ -72,6 +173,38 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _require_user(self) -> WorkspaceUser | None:
+        authorization = self.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            self._send_json(
+                {"error": "AUTH_REQUIRED", "message": "請先登入 GDO 選址系統。"},
+                401,
+            )
+            return None
+        try:
+            user_id = self.token_service.verify(authorization[7:].strip())
+            return self.repository.user_by_id(user_id)
+        except WorkspaceError as error:
+            self._send_workspace_error(error)
+            return None
+
+    def _workspace_action(self, operation) -> None:
+        try:
+            self._send_json(operation())
+        except WorkspaceError as error:
+            self._send_workspace_error(error)
+        except (TypeError, ValueError):
+            self._send_json(
+                {"error": "INVALID_INPUT", "message": "輸入資料格式不正確。"},
+                400,
+            )
+
+    def _send_workspace_error(self, error) -> None:
+        if isinstance(error, WorkspaceError):
+            self._send_json({"error": error.code, "message": error.message}, error.status)
+            return
+        self._send_json({"error": "INVALID_INPUT", "message": "輸入資料格式不正確。"}, 400)
 
 
 def main(argv: list[str] | None = None) -> int:

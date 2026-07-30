@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from dataclasses import dataclass
 
 from .analysis import public_json
+from .cleaning import active_restaurants
+from .decision import SUPPORTED_BUSINESSES, validate_business_type
 from .geo import DISTRICT_CENTROIDS
+from .nearby import build_maps_url
+from .population import DistrictPopulationSource
 from .utils import clamp, level_en
 
 
@@ -44,14 +50,33 @@ def recommend_locations(
     county: str,
     district: str = "",
     limit: int = 5,
+    population_source: DistrictPopulationSource | None = None,
 ) -> dict:
+    business_type = validate_business_type(business_type)
     profile = business_profile_for(business_type)
-    candidates = build_candidates(county, district, profile)
-    recommendations = []
+    if district.strip():
+        return recommend_real_areas(analyzer, business_type, county, district, limit=5)
+    source = population_source or DistrictPopulationSource()
     warnings = []
+    try:
+        population_rows = source.districts(county)
+    except Exception:
+        population_rows = []
+        warnings.append("戶政司行政區人口資料暫時無法取得，本次不產生行政區排序。")
+    candidates = [
+        {
+            "label": item["district"],
+            "query": f"{county}{item['district']}",
+            "population": item["population"],
+            "population_source": item["source"],
+            "population_data_as_of": item["data_as_of"],
+        }
+        for item in population_rows[:6]
+    ]
+    recommendations = []
 
     if not candidates:
-        warnings.append("目前此縣市/行政區沒有內建候選區域，請改輸入主要縣市或指定行政區。")
+        warnings.append("目前沒有足夠的真實行政區證據可供排序。")
 
     for candidate in candidates:
         raw = analyzer.analyze(candidate["query"])
@@ -65,6 +90,13 @@ def recommend_locations(
                 "level": level_en(fit["score"]),
                 "reason": fit["reason"],
                 "suggested_action": fit["suggested_action"],
+                "confidence_score": min(
+                    100,
+                    int(raw.get("data_quality", {}).get("score", 0)) + 10,
+                ),
+                "population": candidate["population"],
+                "population_source": candidate["population_source"],
+                "population_data_as_of": candidate["population_data_as_of"],
                 "source_analysis": compact_source_analysis(raw),
             }
         )
@@ -77,8 +109,9 @@ def recommend_locations(
         "business_type": business_type,
         "business_profile": profile.label,
         "geo_scope": {"county": county, "district": district},
-        "recommendations": recommendations[:limit],
-        "overall_conclusion": reverse_conclusion(recommendations[:limit], profile),
+        "stage": "district",
+        "recommendations": recommendations[:3],
+        "overall_conclusion": reverse_conclusion(recommendations[:3], profile),
         "warnings": warnings,
         "assumptions": [
             "反向選址會先產生候選行政區或候選商圈，再沿用單點選址模型計算人潮、車潮、餐飲/商業密度。",
@@ -87,6 +120,119 @@ def recommend_locations(
         ],
     }
     return result
+
+
+def recommend_real_areas(
+    analyzer,
+    business_type: str,
+    county: str,
+    district: str,
+    limit: int = 5,
+) -> dict:
+    query = f"{county.replace('臺', '台').strip()}{district.replace('臺', '台').strip()}"
+    scope = analyzer.geocoder.geocode(query)
+    fetch = analyzer.restaurant_source.market_evidence(scope, 5.0, business_type)
+    records = active_restaurants(fetch.all_records)
+    road_groups: dict[str, list] = defaultdict(list)
+    for record in records:
+        if not belongs_to_district(record.address, record.district, district):
+            continue
+        road = extract_road_name(record.address)
+        if road:
+            road_groups[road].append(record)
+    ranked = []
+    for road, items in road_groups.items():
+        direct = [item for item in items if business_matches(item.category, business_type)]
+        ratings = [float(item.rating) for item in items if item.rating is not None]
+        reviews = [int(item.user_ratings_total) for item in items if item.user_ratings_total is not None]
+        activity = len(items)
+        score = clamp(
+            48
+            + min(28, activity * 3)
+            + min(12, len(direct) * 3)
+            + min(12, (sum(reviews) / max(len(reviews), 1)) / 80 if reviews else 0)
+        )
+        confidence = clamp(35 + min(45, activity * 5) + (10 if ratings else 0))
+        ranked.append(
+            {
+                "rank": 0,
+                "area": f"{district}{road}",
+                "candidate_location": f"{query}{road}",
+                "fit_score": score,
+                "confidence_score": confidence,
+                "level": level_en(score),
+                "reason": (
+                    f"此道路由 {activity} 間可定位餐飲店家地址聚合而成，"
+                    f"其中辨識到 {len(direct)} 間{business_type}同類店家。"
+                ),
+                "suggested_action": "開啟地圖查看道路範圍，取得實際出租店面後帶入指定地址分析。",
+                "maps_url": build_maps_url(f"{district}{road}", query),
+                "source_analysis": {
+                    "restaurant_nearby_count": activity,
+                    "direct_competitor_count": len(direct),
+                    "average_rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
+                    "data_status": fetch.status,
+                },
+            }
+        )
+    ranked.sort(key=lambda item: (item["fit_score"], item["confidence_score"]), reverse=True)
+    ranked = ranked[:limit]
+    for index, item in enumerate(ranked, 1):
+        item["rank"] = index
+    warning = []
+    if not ranked:
+        warning.append("此行政區未取得足夠的真實道路地址資料，不產生空泛商圈名稱。")
+    return {
+        "business_type": business_type,
+        "business_profile": business_profile_for(business_type).label,
+        "geo_scope": {"county": county, "district": district},
+        "stage": "area",
+        "recommendations": ranked,
+        "overall_conclusion": (
+            f"{district}已找到 {len(ranked)} 個可定位道路熱點。"
+            if ranked
+            else f"{district}目前資料不足，無法形成可定位候選區域。"
+        ),
+        "warnings": warning,
+        "assumptions": [
+            "道路熱點來自實際餐飲店家地址聚合，不等於可出租店面。",
+            "取得實際物件後，仍須進入指定地址分析。",
+        ],
+    }
+
+
+def extract_road_name(address: str) -> str:
+    cleaned = re.sub(r"^\d{3,6}", "", address or "")
+    cleaned = re.sub(r"^.*?[縣市].*?[區鄉鎮市]", "", cleaned)
+    cleaned = re.sub(r"^.*?(?:里|村)", "", cleaned)
+    match = re.search(
+        r"([\u4e00-\u9fff\d]{1,8}?(?:大道|路|街)(?:\d+段|[一二三四五六七八九十]+段)?)",
+        cleaned,
+    )
+    return match.group(1) if match else ""
+
+
+def belongs_to_district(address: str, record_district: str, district: str) -> bool:
+    normalized = district.replace("臺", "台").strip()
+    source_district = (record_district or "").replace("臺", "台").strip()
+    if source_district:
+        return source_district == normalized
+    text = (address or "").replace("臺", "台")
+    if normalized in text:
+        return True
+    has_local_district = bool(re.search(r"[\u4e00-\u9fff]{1,4}(?:區|鄉|鎮)", text))
+    return not has_local_district
+
+
+def business_matches(category: str, business_type: str) -> bool:
+    text = str(category or "").lower()
+    aliases = {
+        "炸雞": ("炸雞", "雞排", "速食"),
+        "便當": ("便當", "餐盒", "飯盒"),
+        "火鍋": ("火鍋", "鍋物", "涮涮鍋"),
+        "燒烤": ("燒烤", "烤肉", "串燒"),
+    }
+    return any(keyword in text for keyword in aliases[business_type])
 
 
 def build_reverse_report(result: dict) -> str:
@@ -111,13 +257,25 @@ def build_reverse_report(result: dict) -> str:
                 f"- 候選點：{item['candidate_location']}",
                 f"- 推薦原因：{item['reason']}",
                 f"- 管理動作：{item['suggested_action']}",
-                f"- 單點綜合分：{source['overall_score']}/100",
-                f"- 餐飲/商業密度：3km {source['restaurant_nearby_count']} 筆，競爭 {source['competition_level']}",
-                f"- 車潮：汽車 {source['car_score']}/100，機車 {source['motorcycle_score']}/100",
-                f"- 資料精準度：{source['data_quality_score']}/100",
-                "",
+                f"- 資料可信度：{item.get('confidence_score', 0)}/100",
             ]
         )
+        if result.get("stage") == "district":
+            lines.extend(
+                [
+                    f"- 單點綜合分：{source['overall_score']}/100",
+                    f"- 餐飲/商業密度：3km {source['restaurant_nearby_count']} 筆，競爭 {source['competition_level']}",
+                    f"- 車潮：汽車 {source['car_score']}/100，機車 {source['motorcycle_score']}/100",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"- 可定位餐飲店家：{source['restaurant_nearby_count']} 間",
+                    f"- 同類店家：{source['direct_competitor_count']} 間",
+                ]
+            )
+        lines.append("")
     if result["warnings"]:
         lines.append("## 四、資料限制")
         for warning in result["warnings"]:
@@ -156,17 +314,29 @@ def business_profile_for(business_type: str) -> BusinessProfile:
             anchors=AREA_ANCHORS["lunchbox"],
             strategy="優先看中午人潮、商辦/學區/工業區、機車外送動線；競爭過密時要用出餐速度與客單價取勝。",
         )
-    if any(keyword in text for keyword in ("美容", "美甲", "美睫", "spa", "沙龍", "醫美")):
+    if "火鍋" in text:
         return BusinessProfile(
-            key="beauty",
-            label="美容/生活服務預約型",
-            crowd_weights={"morning": 0.15, "noon": 0.25, "evening": 0.45, "midnight": 0.15},
-            traffic_weight=0.18,
-            restaurant_weight=0.10,
-            saturation_start=120,
-            saturation_factor=0.04,
-            anchors=AREA_ANCHORS["beauty"],
-            strategy="優先看穩定商業生活圈、晚間客流、停車/捷運便利與住宅消費力；不只追求人潮最大，還要看客群品質。",
+            key="hotpot",
+            label="火鍋聚餐型",
+            crowd_weights={"morning": 0.05, "noon": 0.20, "evening": 0.60, "midnight": 0.15},
+            traffic_weight=0.20,
+            restaurant_weight=0.25,
+            saturation_start=70,
+            saturation_factor=0.18,
+            anchors=AREA_ANCHORS["food"],
+            strategy="優先看晚餐與假日聚餐需求、停車便利、住宅人口與兩公里競品壓力。",
+        )
+    if "燒烤" in text:
+        return BusinessProfile(
+            key="barbecue",
+            label="燒烤晚餐聚餐型",
+            crowd_weights={"morning": 0.02, "noon": 0.12, "evening": 0.61, "midnight": 0.25},
+            traffic_weight=0.15,
+            restaurant_weight=0.25,
+            saturation_start=65,
+            saturation_factor=0.20,
+            anchors=AREA_ANCHORS["food"],
+            strategy="優先看晚間與宵夜活動、聚餐人口、停車及兩公里內同類競爭。",
         )
     return BusinessProfile(
         key="default",

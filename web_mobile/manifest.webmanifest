@@ -1,13 +1,12 @@
 {
-  "name": "GDO 開店找點 AI 分析",
-  "short_name": "GDO 找點",
-  "description": "輸入地址與業態，產生同業分布、營收機會、客單價、競品與評論痛點分析。",
+  "name": "GDO 選址決策中心",
+  "short_name": "GDO 選址",
+  "description": "吉多國際餐飲加盟展店選址、候選比較與案件管理工具。",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f3f6fa",
-  "theme_color": "#12355b",
-  "orientation": "portrait",
+  "background_color": "#f3f5f8",
+  "theme_color": "#082f5b",
   "icons": [
     {
       "src": "/icon.svg",

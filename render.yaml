@@ -16,3 +16,15 @@ services:
         sync: false
       - key: TDX_VD_URL
         sync: false
+      - key: GDO_AUTH_SECRET
+        sync: false
+      - key: GDO_ADMIN_EMAIL
+        sync: false
+      - key: GDO_ADMIN_PASSWORD
+        sync: false
+      - key: GDO_ADMIN_NAME
+        value: GDO 總部管理員
+      - key: GDO_DB_PATH
+        sync: false
+      - key: GDO_DATABASE_PERSISTENT
+        sync: false

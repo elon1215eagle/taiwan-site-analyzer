@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-MARKET_REPORT_CONTRACT_VERSION = "market-report-v3"
+MARKET_REPORT_CONTRACT_VERSION = "market-report-v4"
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,8 @@ class Competitor:
     risk: str
     review_positive: list[str] = field(default_factory=list)
     review_negative: list[str] = field(default_factory=list)
+    positive_snippets: list[str] = field(default_factory=list)
+    negative_snippets: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,8 @@ class MarketMap:
     center_label: str
     point_count: int
     points: list[MarketMapPoint]
+    center_lat: float | None = None
+    center_lon: float | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,8 @@ class MarketReportContract:
     input_location: str
     business_type: str
     radius_km: float
+    comparison_radii_km: list[float]
+    property: dict[str, Any]
     geo_scope: dict[str, Any]
     evidence_status: dict[str, Any]
     summary: MarketSummary
@@ -115,7 +121,11 @@ class MarketReportContract:
     monthly_revenue_distribution: list[DistributionItem]
     average_ticket_distribution: TicketDistribution
     top_competitors: list[Competitor]
+    adjacent_competitors: list[Competitor]
     review_summary: ReviewSummary
+    scorecard: dict[str, Any]
+    revenue_scenarios: dict[str, Any]
+    data_as_of: str
     data_requirements: list[str]
     warnings: list[str]
     contract_version: str = MARKET_REPORT_CONTRACT_VERSION
@@ -135,6 +145,8 @@ def validate_market_report(payload: dict[str, Any]) -> None:
         "input_location",
         "business_type",
         "radius_km",
+        "comparison_radii_km",
+        "property",
         "geo_scope",
         "evidence_status",
         "summary",
@@ -144,7 +156,11 @@ def validate_market_report(payload: dict[str, Any]) -> None:
         "monthly_revenue_distribution",
         "average_ticket_distribution",
         "top_competitors",
+        "adjacent_competitors",
         "review_summary",
+        "scorecard",
+        "revenue_scenarios",
+        "data_as_of",
         "data_requirements",
         "warnings",
         "contract_version",
@@ -182,5 +198,18 @@ def validate_market_report(payload: dict[str, Any]) -> None:
     if not road_traffic["available"] and any(value is not None for value in traffic_values):
         raise ValueError("market_report_unavailable_traffic_must_not_have_values")
     valid_levels = {"直接競品", "鄰近競品"}
-    if any(item["competitor_level"] not in valid_levels for item in payload["top_competitors"]):
+    competitors = [*payload["top_competitors"], *payload["adjacent_competitors"]]
+    if any(item["competitor_level"] not in valid_levels for item in competitors):
         raise ValueError("market_report_invalid_competitor_level")
+    scorecard = payload["scorecard"]
+    if len(scorecard["dimensions"]) != 5:
+        raise ValueError("market_report_five_dimensions_required")
+    if not 0 <= scorecard["overall_score"] <= 100:
+        raise ValueError("market_report_invalid_score")
+    if not 0 <= scorecard["confidence_score"] <= 100:
+        raise ValueError("market_report_invalid_confidence")
+    if scorecard["decision"] not in {"優先現勘", "補資料後再評估", "不列入優先候選"}:
+        raise ValueError("market_report_invalid_decision")
+    scenarios = payload["revenue_scenarios"]
+    if scenarios["available"] and len(scenarios["scenarios"]) != 3:
+        raise ValueError("market_report_three_revenue_scenarios_required")

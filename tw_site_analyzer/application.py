@@ -5,6 +5,7 @@ from time import monotonic
 from typing import Callable
 
 from .analysis import SiteSelectionAnalyzer, public_json
+from .decision import SUPPORTED_BUSINESSES, primary_radius_for
 from .market_report import build_market_report, build_market_report_text
 from .nearby import build_nearby_report, nearby_stores
 from .observability import ServiceTelemetry, build_health_report
@@ -91,8 +92,27 @@ class SiteAnalyzerApplication:
             "MARKET_REPORT_INPUT_REQUIRED",
             "請輸入地址與業態。",
         )
-        radius_km = number_field(body, "radius_km", 0.8, 0.1, 5.0)
-        result = public_json(build_market_report(self.analyzer, location, business_type, radius_km))
+        if business_type not in SUPPORTED_BUSINESSES:
+            raise RequestValidationError(
+                "UNSUPPORTED_BUSINESS_TYPE",
+                "業態僅支援炸雞、火鍋、燒烤及便當。",
+            )
+        if "radius_km" in body:
+            number_field(body, "radius_km", primary_radius_for(business_type), 0.1, 5.0)
+        monthly_rent = optional_number_field(body, "monthly_rent", 0, 10_000_000, integer=True)
+        area_ping = optional_number_field(body, "area_ping", 0.1, 10_000)
+        onsite_count = optional_number_field(body, "onsite_count", 0, 100_000, integer=True)
+        result = public_json(
+            build_market_report(
+                self.analyzer,
+                location,
+                business_type,
+                primary_radius_for(business_type),
+                monthly_rent=monthly_rent,
+                area_ping=area_ping,
+                onsite_count=onsite_count,
+            )
+        )
         self.telemetry.record_market_report(result)
         return {"report": build_market_report_text(result), "json": result}
 
@@ -116,3 +136,25 @@ def number_field(body: dict, field: str, default: float, minimum: float, maximum
             f"{field} 必須介於 {minimum:g} 與 {maximum:g} 之間。",
         )
     return value
+
+
+def optional_number_field(
+    body: dict,
+    field: str,
+    minimum: float,
+    maximum: float,
+    integer: bool = False,
+) -> float | int | None:
+    raw_value = body.get(field)
+    if raw_value in (None, ""):
+        return None
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as error:
+        raise RequestValidationError("INVALID_NUMBER", f"{field} 必須是數字。") from error
+    if value < minimum or value > maximum:
+        raise RequestValidationError(
+            "NUMBER_OUT_OF_RANGE",
+            f"{field} 必須介於 {minimum:g} 與 {maximum:g} 之間。",
+        )
+    return int(value) if integer else value
