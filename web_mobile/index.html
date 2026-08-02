@@ -65,7 +65,20 @@
     .brand-mark i:nth-child(4) { background:var(--orange); }
     .brand-mode { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; font-weight:850; }
     .brand-mode::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 4px var(--orange-soft); }
+    .mode-tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+    .mode-button {
+      min-height:40px;
+      border:1px solid var(--line);
+      border-radius:6px;
+      background:#fff;
+      color:var(--muted);
+      font-size:14px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    .mode-button.active { border-color:var(--navy); background:var(--navy); color:#fff; }
     .search-form { display:grid; grid-template-columns:140px 140px 1fr 112px; gap:10px; }
+    .reverse-form { display:grid; grid-template-columns:1fr 1fr 1fr 140px; gap:10px; }
     .filters { display:grid; grid-template-columns:1fr 132px; gap:10px; margin-top:10px; }
     input, select {
       width:100%;
@@ -178,24 +191,38 @@
     .store-card p, .card p { margin:0 0 8px; color:var(--muted); font-size:14px; }
     .map-link { color:var(--blue); font-weight:900; text-decoration:none; }
     .card { padding:16px; }
+    .reverse-summary { border-left:5px solid var(--blue); }
+    .reverse-summary strong { display:block; color:var(--navy); font-size:20px; }
+    .recommend-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-top:14px; }
+    .recommend-card { position:relative; padding:18px; border-top:4px solid var(--blue); }
+    .recommend-card:nth-child(2) { border-top-color:var(--red); }
+    .recommend-card:nth-child(3) { border-top-color:var(--gold); }
+    .recommend-card h3 { margin:0 58px 8px 0; color:var(--navy); font-size:18px; line-height:1.35; }
+    .recommend-score { position:absolute; top:14px; right:14px; color:var(--navy); font-size:22px; font-weight:950; }
+    .recommend-score small { font-size:11px; color:var(--muted); }
+    .secondary-button { width:100%; min-height:40px; margin-top:10px; border:1px solid var(--navy); border-radius:6px; background:#fff; color:var(--navy); font-weight:900; cursor:pointer; }
+    .secondary-button:hover { background:var(--blue-soft); }
     .note { border-left:4px solid var(--gold); padding-left:10px; color:#5d6678; font-size:14px; }
     .loading, .error { display:none; margin-top:10px; font-size:13px; font-weight:850; }
     .loading { color:var(--blue); }
     .error { color:var(--red); }
     @media (max-width:780px) {
       .search-form { grid-template-columns:1fr 1fr; }
+      .reverse-form { grid-template-columns:1fr 1fr; }
       .location-detail { grid-column:1 / -1; }
       .primary-button { grid-column:1 / -1; }
       .metrics { grid-template-columns:1fr 1fr; }
+      .recommend-grid { grid-template-columns:1fr 1fr; }
     }
     @media (max-width:520px) {
       .topbar { padding-left:16px; padding-right:16px; }
       .brand-mode { display:none; }
       main { padding:24px 16px 0; }
       h1 { font-size:28px; }
-      .search-form { grid-template-columns:1fr; }
+      .search-form, .reverse-form { grid-template-columns:1fr; }
       .location-detail, .primary-button { grid-column:auto; }
       .metrics { grid-template-columns:1fr; }
+      .recommend-grid { grid-template-columns:1fr; }
       .map-box { height:320px; }
       .insight strong { max-width:100%; padding-top:28px; }
     }
@@ -210,6 +237,10 @@
           <span>GDO 開店找點 AI 分析</span>
         </div>
         <div class="brand-mode">選址決策中心</div>
+      </div>
+      <div class="mode-tabs" role="tablist" aria-label="分析模式">
+        <button class="mode-button active" type="button" data-mode="single" role="tab" aria-selected="true">指定地址分析</button>
+        <button class="mode-button" type="button" data-mode="reverse" role="tab" aria-selected="false">反查推薦區域</button>
       </div>
       <form id="reportForm">
         <div class="search-form">
@@ -234,7 +265,18 @@
           </select>
         </div>
       </form>
-      <div class="quick-list" aria-label="快速業態">
+      <form id="reverseForm" class="reverse-form" hidden>
+        <select id="reverseCountyInput" aria-label="反查縣市" required></select>
+        <select id="reverseDistrictInput" aria-label="反查行政區"></select>
+        <select id="reverseBusinessInput" aria-label="反查業態" required>
+          <option value="炸雞" selected>炸雞</option>
+          <option value="火鍋">火鍋</option>
+          <option value="燒烤">燒烤</option>
+          <option value="便當">便當</option>
+        </select>
+        <button class="primary-button" type="submit">推薦區域</button>
+      </form>
+      <div id="quickList" class="quick-list" aria-label="快速業態">
         <button class="quick" type="button" data-business="炸雞">炸雞</button>
         <button class="quick" type="button" data-business="火鍋">火鍋</button>
         <button class="quick" type="button" data-business="燒烤">燒烤</button>
@@ -260,6 +302,11 @@
     const locationInput = document.querySelector("#locationInput");
     const businessInput = document.querySelector("#businessInput");
     const radiusInput = document.querySelector("#radiusInput");
+    const reverseForm = document.querySelector("#reverseForm");
+    const reverseCountyInput = document.querySelector("#reverseCountyInput");
+    const reverseDistrictInput = document.querySelector("#reverseDistrictInput");
+    const reverseBusinessInput = document.querySelector("#reverseBusinessInput");
+    const quickList = document.querySelector("#quickList");
     const resultEl = document.querySelector("#result");
     const emptyEl = document.querySelector("#empty");
     const loadingEl = document.querySelector("#loading");
@@ -272,7 +319,12 @@
     countyInput.value = DEFAULT_COUNTY;
     populateDistricts();
 
+    reverseCountyInput.innerHTML = counties.map((county) => `<option value="${county}">${county}</option>`).join("");
+    reverseCountyInput.value = DEFAULT_COUNTY;
+    populateReverseDistricts();
+
     countyInput.addEventListener("change", populateDistricts);
+    reverseCountyInput.addEventListener("change", populateReverseDistricts);
 
     function populateDistricts() {
       const districts = globalThis.TAIWAN_DISTRICTS?.[countyInput.value] || [];
@@ -281,9 +333,25 @@
         .join("")}`;
     }
 
+    function populateReverseDistricts() {
+      const districts = globalThis.TAIWAN_DISTRICTS?.[reverseCountyInput.value] || [];
+      reverseDistrictInput.innerHTML = `<option value="">全市推薦</option>${districts
+        .map((district) => `<option value="${district}">${district}</option>`)
+        .join("")}`;
+    }
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       queryReport();
+    });
+
+    reverseForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      queryRecommendations();
+    });
+
+    document.querySelectorAll(".mode-button").forEach((button) => {
+      button.addEventListener("click", () => switchMode(button.dataset.mode));
     });
 
     document.querySelectorAll(".quick").forEach((button) => {
@@ -323,6 +391,103 @@
       } finally {
         setLoading(false);
       }
+    }
+
+    function switchMode(mode) {
+      const reverseMode = mode === "reverse";
+      form.hidden = reverseMode;
+      reverseForm.hidden = !reverseMode;
+      quickList.hidden = reverseMode;
+      document.querySelectorAll(".mode-button").forEach((button) => {
+        const active = button.dataset.mode === mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+      });
+      hideError();
+      emptyEl.hidden = false;
+      emptyEl.innerHTML = `<p>${reverseMode
+        ? "選擇縣市、行政區與業態，系統將依市場證據推薦優先評估區域。"
+        : "輸入地址與業態後即可產生分析。營收與評論若未接資料，系統會清楚標示為推估或待接。"}</p>`;
+      resultEl.hidden = true;
+      resultEl.innerHTML = "";
+    }
+
+    async function queryRecommendations() {
+      const payload = {
+        county: reverseCountyInput.value,
+        district: reverseDistrictInput.value,
+        business_type: reverseBusinessInput.value
+      };
+      if (!payload.county || !payload.business_type) {
+        showError("請選擇縣市與業態。");
+        return;
+      }
+      setLoading(true, "正在比對市場證據並推薦區域...");
+      hideError();
+      try {
+        const response = await fetch(`${API_BASE}/api/recommend`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "反查失敗");
+        renderRecommendations(data.json);
+      } catch (error) {
+        showError(error.message || "反查失敗，請稍後再試。");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function renderRecommendations(data) {
+      emptyEl.hidden = true;
+      resultEl.hidden = false;
+      const recommendations = data.recommendations || [];
+      resultEl.innerHTML = `
+        <section class="card reverse-summary">
+          <strong>${escapeHtml(data.business_type)}｜${escapeHtml(data.geo_scope?.county)}${escapeHtml(data.geo_scope?.district || "全市")}</strong>
+          <p>${escapeHtml(data.overall_conclusion || "已完成區域比較。")}</p>
+        </section>
+        <h2 class="section-title">推薦區域排名</h2>
+        ${recommendations.length ? `<section class="recommend-grid">${recommendations.slice(0, 3).map(recommendationCard).join("")}</section>` : `<section class="empty"><p>目前資料不足，未產生推薦區域。</p></section>`}
+        ${data.warnings?.length ? `<section class="card" style="margin-top:14px;"><p class="note">${data.warnings.map(escapeHtml).join("；")}</p></section>` : ""}
+      `;
+      resultEl.querySelectorAll("[data-analyze-location]").forEach((button) => {
+        button.addEventListener("click", () => loadRecommendationIntoReport(button.dataset.analyzeLocation));
+      });
+    }
+
+    function recommendationCard(item) {
+      const source = item.source_analysis || {};
+      return `
+        <article class="card recommend-card">
+          <h3>No.${escapeHtml(item.rank)} ${escapeHtml(item.area)}</h3>
+          <div class="recommend-score">${escapeHtml(item.fit_score)}<small>/100</small></div>
+          <p><strong>推薦原因：</strong>${escapeHtml(item.reason)}</p>
+          <p><strong>建議：</strong>${escapeHtml(item.suggested_action)}</p>
+          <div class="meta">
+            <span class="tag">餐飲 ${displayCount(source.restaurant_nearby_count)} 間</span>
+            <span class="tag">競爭 ${escapeHtml(source.competition_level || "待確認")}</span>
+            <span class="tag">資料 ${displayMetric(source.data_quality_score, "/100")}</span>
+          </div>
+          <button class="secondary-button" type="button" data-analyze-location="${escapeHtml(item.candidate_location)}">帶入地址分析</button>
+        </article>
+      `;
+    }
+
+    function loadRecommendationIntoReport(candidateLocation) {
+      const county = counties.find((item) => candidateLocation.startsWith(item)) || reverseCountyInput.value;
+      countyInput.value = county;
+      populateDistricts();
+      const districts = globalThis.TAIWAN_DISTRICTS?.[county] || [];
+      const district = districts.find((item) => candidateLocation.includes(item)) || reverseDistrictInput.value;
+      districtInput.value = district;
+      locationInput.value = candidateLocation.replace(county, "").replace(district, "").trim();
+      businessInput.value = reverseBusinessInput.value;
+      switchMode("single");
+      locationInput.focus();
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     function renderReport(data) {
@@ -476,7 +641,10 @@
       return `<p class="note">市場證據未完整取得，本次不產生推估數字。</p>`;
     }
 
-    function setLoading(isLoading) { loadingEl.style.display = isLoading ? "block" : "none"; }
+    function setLoading(isLoading, message = "正在產生找點分析報告...") {
+      loadingEl.textContent = message;
+      loadingEl.style.display = isLoading ? "block" : "none";
+    }
     function showError(message) { errorEl.textContent = message; errorEl.style.display = "block"; }
     function hideError() { errorEl.textContent = ""; errorEl.style.display = "none"; }
     function escapeHtml(value) {
