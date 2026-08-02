@@ -24,6 +24,10 @@ services:
         sync: false
       - key: GDO_ADMIN_NAME
         value: GDO 總部管理員
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
       - key: GDO_DB_PATH
         sync: false
       - key: GDO_DATABASE_PERSISTENT

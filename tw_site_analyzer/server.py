@@ -20,9 +20,19 @@ from .workspace import (
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_mobile"
 
 
+def build_workspace_repository():
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_secret_key = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+    if supabase_url and supabase_secret_key:
+        from .supabase_workspace import SupabaseWorkspaceRepository
+
+        return SupabaseWorkspaceRepository(supabase_url, supabase_secret_key)
+    return WorkspaceRepository(os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3"))
+
+
 class SiteAnalyzerHandler(BaseHTTPRequestHandler):
     application = SiteAnalyzerApplication()
-    repository = WorkspaceRepository(os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3"))
+    repository = build_workspace_repository()
     token_service = TokenService(
         os.getenv("GDO_AUTH_SECRET", "gdo-local-development-secret-change-me")
     )
@@ -38,10 +48,20 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/api/health":
             health = self.application.health()
-            database_path = os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3")
-            persistent_database = database_path.startswith("/var/data") or bool(
-                os.getenv("GDO_DATABASE_PERSISTENT")
+            using_supabase = bool(
+                os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SECRET_KEY")
             )
+            database_ready = False
+            if using_supabase:
+                try:
+                    database_ready = bool(self.repository.health())
+                except Exception:
+                    database_ready = False
+            else:
+                database_path = os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3")
+                database_ready = database_path.startswith("/var/data") or bool(
+                    os.getenv("GDO_DATABASE_PERSISTENT")
+                )
             health["workspace"] = {
                 "authentication": "ready" if os.getenv("GDO_AUTH_SECRET") else "degraded",
                 "admin_bootstrap": (
@@ -49,10 +69,12 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
                     if os.getenv("GDO_ADMIN_EMAIL") and os.getenv("GDO_ADMIN_PASSWORD")
                     else "degraded"
                 ),
-                "database": "ready" if persistent_database else "ephemeral",
+                "database": "ready" if database_ready else "degraded",
+                "database_provider": "supabase" if using_supabase else "sqlite",
+                "photo_storage": "ready" if using_supabase and database_ready else "degraded",
             }
             health["ok"] = health["ok"] and all(
-                status == "ready" for status in health["workspace"].values()
+                status in ("ready", "supabase") for status in health["workspace"].values()
             )
             if not health["ok"]:
                 health["status"] = "degraded"
