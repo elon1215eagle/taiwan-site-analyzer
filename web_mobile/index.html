@@ -65,7 +65,7 @@
     .brand-mark i:nth-child(4) { background:var(--orange); }
     .brand-mode { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; font-weight:850; }
     .brand-mode::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 4px var(--orange-soft); }
-    .search-form { display:grid; grid-template-columns:1fr 112px; gap:10px; }
+    .search-form { display:grid; grid-template-columns:140px 140px 1fr 112px; gap:10px; }
     .filters { display:grid; grid-template-columns:1fr 132px; gap:10px; margin-top:10px; }
     input, select {
       width:100%;
@@ -183,6 +183,9 @@
     .loading { color:var(--blue); }
     .error { color:var(--red); }
     @media (max-width:780px) {
+      .search-form { grid-template-columns:1fr 1fr; }
+      .location-detail { grid-column:1 / -1; }
+      .primary-button { grid-column:1 / -1; }
       .metrics { grid-template-columns:1fr 1fr; }
     }
     @media (max-width:520px) {
@@ -190,6 +193,8 @@
       .brand-mode { display:none; }
       main { padding:24px 16px 0; }
       h1 { font-size:28px; }
+      .search-form { grid-template-columns:1fr; }
+      .location-detail, .primary-button { grid-column:auto; }
       .metrics { grid-template-columns:1fr; }
       .map-box { height:320px; }
       .insight strong { max-width:100%; padding-top:28px; }
@@ -208,11 +213,18 @@
       </div>
       <form id="reportForm">
         <div class="search-form">
-          <input id="locationInput" autocomplete="street-address" placeholder="輸入開店地址" value="台北市松山區三民路138巷10號">
+          <select id="countyInput" aria-label="縣市" required></select>
+          <select id="districtInput" aria-label="行政區" required></select>
+          <input id="locationInput" class="location-detail" autocomplete="street-address" aria-label="路段與門牌" placeholder="路段與門牌，例如：建工路 123 號" required>
           <button class="primary-button" type="submit">分析</button>
         </div>
         <div class="filters">
-          <input id="businessInput" placeholder="業態，例如：便當、炸雞、飲料" value="便當">
+          <select id="businessInput" aria-label="業態">
+            <option value="炸雞" selected>炸雞</option>
+            <option value="火鍋">火鍋</option>
+            <option value="燒烤">燒烤</option>
+            <option value="便當">便當</option>
+          </select>
           <select id="radiusInput" aria-label="分析半徑">
             <option value="0.5">500 公尺</option>
             <option value="0.8" selected>800 公尺</option>
@@ -223,11 +235,10 @@
         </div>
       </form>
       <div class="quick-list" aria-label="快速業態">
-        <button class="quick" type="button" data-business="便當">便當</button>
         <button class="quick" type="button" data-business="炸雞">炸雞</button>
-        <button class="quick" type="button" data-business="飲料">飲料</button>
-        <button class="quick" type="button" data-business="早餐">早餐</button>
         <button class="quick" type="button" data-business="火鍋">火鍋</button>
+        <button class="quick" type="button" data-business="燒烤">燒烤</button>
+        <button class="quick" type="button" data-business="便當">便當</button>
       </div>
       <div id="loading" class="loading">正在產生找點分析報告...</div>
       <div id="error" class="error"></div>
@@ -241,8 +252,11 @@
     </main>
   </div>
 
+  <script src="/divisions.js"></script>
   <script>
     const form = document.querySelector("#reportForm");
+    const countyInput = document.querySelector("#countyInput");
+    const districtInput = document.querySelector("#districtInput");
     const locationInput = document.querySelector("#locationInput");
     const businessInput = document.querySelector("#businessInput");
     const radiusInput = document.querySelector("#radiusInput");
@@ -251,6 +265,21 @@
     const loadingEl = document.querySelector("#loading");
     const errorEl = document.querySelector("#error");
     const API_BASE = location.protocol === "file:" ? "http://127.0.0.1:8787" : "";
+    const DEFAULT_COUNTY = "高雄市";
+    const counties = Object.keys(globalThis.TAIWAN_DISTRICTS || {});
+
+    countyInput.innerHTML = counties.map((county) => `<option value="${county}">${county}</option>`).join("");
+    countyInput.value = DEFAULT_COUNTY;
+    populateDistricts();
+
+    countyInput.addEventListener("change", populateDistricts);
+
+    function populateDistricts() {
+      const districts = globalThis.TAIWAN_DISTRICTS?.[countyInput.value] || [];
+      districtInput.innerHTML = `<option value="">請選擇行政區</option>${districts
+        .map((district) => `<option value="${district}">${district}</option>`)
+        .join("")}`;
+    }
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -270,12 +299,12 @@
 
     async function queryReport() {
       const payload = {
-        location: locationInput.value.trim(),
-        business_type: businessInput.value.trim(),
+        location: [countyInput.value, districtInput.value, locationInput.value.trim()].filter(Boolean).join(""),
+        business_type: businessInput.value,
         radius_km: Number(radiusInput.value)
       };
-      if (!payload.location || !payload.business_type) {
-        showError("請輸入地址與業態。");
+      if (!countyInput.value || !districtInput.value || !locationInput.value.trim() || !payload.business_type) {
+        showError("請選擇縣市、行政區並輸入路段與門牌。");
         return;
       }
       setLoading(true);

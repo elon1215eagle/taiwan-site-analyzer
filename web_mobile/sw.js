@@ -1,7 +1,8 @@
-const CACHE_NAME = "gdo-market-report-v5";
+const CACHE_NAME = "gdo-market-report-v6";
 const APP_SHELL = [
   "/",
   "/index.html",
+  "/divisions.js",
   "/manifest.webmanifest",
   "/icon.svg"
 ];
