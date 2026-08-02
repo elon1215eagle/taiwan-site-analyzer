@@ -1,8 +1,9 @@
-const CACHE_NAME = "gdo-site-selection-v6";
+const CACHE_NAME = "gdo-site-selection-v7";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/app.css",
+  "/divisions.js",
   "/app.js",
   "/manifest.webmanifest",
   "/icon.svg"

@@ -187,7 +187,7 @@ main { width: min(1320px, 100%); margin: 0 auto; padding: 36px 34px 70px; }
   padding: 18px;
   box-shadow: var(--shadow);
 }
-.address-form { grid-template-columns: 2.3fr 1fr 1fr 1fr auto; align-items: end; }
+.address-form { grid-template-columns: 1fr 1fr 1fr 2.3fr 1fr 1fr auto; align-items: end; }
 .reverse-form { grid-template-columns: 1fr 1fr 1fr auto; align-items: end; }
 .case-form { grid-template-columns: 2fr 1fr 1fr auto; align-items: end; margin-bottom: 18px; border-top-color: var(--gold); }
 .account-form { grid-template-columns: 1fr 1.4fr 1fr 1fr auto; align-items: end; margin-bottom: 18px; border-top-color: var(--red); }

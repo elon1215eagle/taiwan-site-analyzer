@@ -64,8 +64,10 @@
             </div>
           </header>
           <form id="addressForm" class="tool-panel address-form">
-            <label class="wide">候選店面地址<input id="addressInput" autocomplete="street-address" placeholder="縣市、行政區、路段及門牌" required></label>
+            <label>縣市<select id="addressCounty" required></select></label>
+            <label>行政區<select id="addressDistrict" required></select></label>
             <label>業態<select id="businessSelect" required></select></label>
+            <label class="wide">路段與門牌<input id="addressDetail" autocomplete="street-address" placeholder="例如：建工路 123 號" required></label>
             <label>月租金<input id="rentInput" type="number" min="0" inputmode="numeric" placeholder="元"></label>
             <label>坪數<input id="areaInput" type="number" min="0.1" step="0.1" inputmode="decimal" placeholder="坪"></label>
             <button class="button primary analyze-button" type="submit"><i data-lucide="scan-search"></i>開始分析</button>
@@ -84,7 +86,7 @@
           <form id="reverseForm" class="tool-panel reverse-form">
             <label>業態<select id="reverseBusiness" required></select></label>
             <label>縣市<select id="countySelect" required></select></label>
-            <label>行政區<input id="districtInput" placeholder="第一階段可留白"></label>
+            <label>行政區<select id="districtInput"></select></label>
             <button class="button primary" type="submit"><i data-lucide="radar"></i>產生排序</button>
           </form>
           <div id="reverseState" class="state-panel">
@@ -133,6 +135,7 @@
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="/divisions.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

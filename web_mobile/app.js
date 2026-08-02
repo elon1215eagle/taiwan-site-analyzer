@@ -1,10 +1,12 @@
 const BUSINESS_TYPES = ["炸雞", "火鍋", "燒烤", "便當"];
+const DEFAULT_COUNTY = "高雄市";
 const COUNTIES = [
   "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市",
   "基隆市", "新竹市", "嘉義市", "新竹縣", "苗栗縣", "彰化縣",
   "南投縣", "雲林縣", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣",
   "台東縣", "澎湖縣", "金門縣", "連江縣"
 ];
+const DISTRICTS_BY_COUNTY = globalThis.TAIWAN_DISTRICTS || {};
 const ROLE_LABELS = { franchisee: "加盟主", developer: "區域開發人員", admin: "總部管理員" };
 const STATUS_LABELS = {
   draft: "草稿", submitted: "已送審", needs_info: "待補件",
@@ -46,10 +48,45 @@ function populateSelects() {
   const businessOptions = BUSINESS_TYPES.map((item) => `<option value="${item}">${item}</option>`).join("");
   ["#businessSelect", "#reverseBusiness", "#caseBusiness"].forEach((id) => {
     $(id).innerHTML = businessOptions;
+    $(id).value = "炸雞";
   });
   const countyOptions = `<option value="">請選擇</option>${COUNTIES.map((item) => `<option value="${item}">${item}</option>`).join("")}`;
-  $("#countySelect").innerHTML = countyOptions;
-  $("#caseCounty").innerHTML = countyOptions;
+  ["#addressCounty", "#countySelect", "#caseCounty"].forEach((id) => {
+    $(id).innerHTML = countyOptions;
+    $(id).value = DEFAULT_COUNTY;
+  });
+  populateDistrictSelect("#addressDistrict", DEFAULT_COUNTY, false);
+  populateDistrictSelect("#districtInput", DEFAULT_COUNTY, true);
+}
+
+function populateDistrictSelect(selector, county, allowAll, selected = "") {
+  const districts = DISTRICTS_BY_COUNTY[county] || [];
+  const placeholder = allowAll ? "全部行政區（先排前三）" : "請選擇行政區";
+  $(selector).innerHTML = `<option value="">${placeholder}</option>${districts
+    .map((item) => `<option value="${item}">${item}</option>`)
+    .join("")}`;
+  if (selected && districts.includes(selected)) $(selector).value = selected;
+}
+
+function composeAddress() {
+  return [$("#addressCounty").value, $("#addressDistrict").value, $("#addressDetail").value.trim()]
+    .filter(Boolean)
+    .join("");
+}
+
+function setAddressFields(address, fallbackCounty = "", fallbackDistrict = "") {
+  const normalized = String(address || "").replaceAll("臺", "台").trim();
+  const county = COUNTIES.find((item) => normalized.startsWith(item)) || fallbackCounty || DEFAULT_COUNTY;
+  const afterCounty = normalized.startsWith(county) ? normalized.slice(county.length).trim() : normalized;
+  const districts = DISTRICTS_BY_COUNTY[county] || [];
+  const district = districts.find((item) => afterCounty.startsWith(item)) || fallbackDistrict || "";
+  const detail = district && afterCounty.startsWith(district)
+    ? afterCounty.slice(district.length).trim()
+    : afterCounty;
+
+  $("#addressCounty").value = county;
+  populateDistrictSelect("#addressDistrict", county, false, district);
+  $("#addressDetail").value = detail;
 }
 
 function bindEvents() {
@@ -57,6 +94,12 @@ function bindEvents() {
   $("#logoutButton").addEventListener("click", logout);
   $("#mobileMenuButton").addEventListener("click", () => $(".sidebar").classList.toggle("open"));
   $$(".nav-item").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
+  $("#addressCounty").addEventListener("change", () => {
+    populateDistrictSelect("#addressDistrict", $("#addressCounty").value, false);
+  });
+  $("#countySelect").addEventListener("change", () => {
+    populateDistrictSelect("#districtInput", $("#countySelect").value, true);
+  });
   $("#addressForm").addEventListener("submit", analyzeAddress);
   $("#reverseForm").addEventListener("submit", runReverse);
   $("#newCaseButton").addEventListener("click", () => $("#caseForm").hidden = !$("#caseForm").hidden);
@@ -157,7 +200,7 @@ function switchView(viewName) {
 async function analyzeAddress(event) {
   event.preventDefault();
   const payload = {
-    location: $("#addressInput").value.trim(),
+    location: composeAddress(),
     business_type: $("#businessSelect").value,
     monthly_rent: optionalNumber($("#rentInput").value),
     area_ping: optionalNumber($("#areaInput").value)
@@ -422,7 +465,7 @@ async function runReverse(event) {
   const payload = {
     business_type: $("#reverseBusiness").value,
     county: $("#countySelect").value,
-    district: $("#districtInput").value.trim()
+    district: $("#districtInput").value
   };
   if (!payload.county) return toast("請選擇縣市。");
   setBusy(true, "正在排名候選區域");
@@ -458,10 +501,10 @@ function renderReverse(data) {
     $("#reverseForm").requestSubmit();
   }));
   $$(".analyze-area").forEach((button) => button.addEventListener("click", () => {
-    $("#addressInput").value = button.dataset.location;
+    setAddressFields(button.dataset.location, data.geo_scope?.county, data.geo_scope?.district);
     $("#businessSelect").value = data.business_type;
     switchView("address");
-    $("#addressInput").focus();
+    $("#addressDetail").focus();
   }));
   refreshIcons();
 }
@@ -597,12 +640,12 @@ function renderCaseDetail(caseData) {
     const candidate = state.currentCase.candidates.find((item) => item.id === Number(button.dataset.id));
     if (!candidate) return;
     state.refreshCandidateId = candidate.id;
-    $("#addressInput").value = candidate.address;
+    setAddressFields(candidate.address);
     $("#rentInput").value = candidate.monthly_rent ?? "";
     $("#areaInput").value = candidate.area_ping ?? "";
     $("#businessSelect").value = state.currentCase.business_type;
     switchView("address");
-    $("#addressInput").focus();
+    $("#addressDetail").focus();
   }));
   if ($("#surveyForm")) $("#surveyForm").addEventListener("submit", saveSurvey);
   if ($("#reviewForm")) $("#reviewForm").addEventListener("submit", updateCaseStatus);
