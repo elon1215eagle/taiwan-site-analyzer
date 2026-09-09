@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .application import SiteAnalyzerApplication
+from .supabase_workspace import SupabaseRestError
 from .workspace import (
     TokenService,
     WorkspaceError,
@@ -30,13 +31,29 @@ def build_workspace_repository():
     return WorkspaceRepository(os.getenv("GDO_DB_PATH", ".data/gdo.sqlite3"))
 
 
+def bootstrap_workspace_admin(repository) -> str:
+    if not os.getenv("GDO_ADMIN_EMAIL", "").strip() or not os.getenv(
+        "GDO_ADMIN_PASSWORD", ""
+    ):
+        return "degraded"
+    try:
+        bootstrap_admin(repository)
+    except Exception as error:
+        print(
+            "[site-analyzer] Workspace admin bootstrap deferred: "
+            f"{type(error).__name__}"
+        )
+        return "degraded"
+    return "ready"
+
+
 class SiteAnalyzerHandler(BaseHTTPRequestHandler):
     application = SiteAnalyzerApplication()
     repository = build_workspace_repository()
     token_service = TokenService(
         os.getenv("GDO_AUTH_SECRET", "gdo-local-development-secret-change-me")
     )
-    bootstrap_admin(repository)
+    admin_bootstrap_status = bootstrap_workspace_admin(repository)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -62,13 +79,13 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
                 database_ready = database_path.startswith("/var/data") or bool(
                     os.getenv("GDO_DATABASE_PERSISTENT")
                 )
+            if database_ready and self.admin_bootstrap_status != "ready":
+                type(self).admin_bootstrap_status = bootstrap_workspace_admin(
+                    self.repository
+                )
             health["workspace"] = {
                 "authentication": "ready" if os.getenv("GDO_AUTH_SECRET") else "degraded",
-                "admin_bootstrap": (
-                    "ready"
-                    if os.getenv("GDO_ADMIN_EMAIL") and os.getenv("GDO_ADMIN_PASSWORD")
-                    else "degraded"
-                ),
+                "admin_bootstrap": self.admin_bootstrap_status,
                 "database": "ready" if database_ready else "degraded",
                 "database_provider": "supabase" if using_supabase else "sqlite",
                 "photo_storage": "ready" if using_supabase and database_ready else "degraded",
@@ -150,6 +167,8 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
                 self._send_json({"token": self.token_service.issue(user), "user": user.to_dict()})
             except WorkspaceError as error:
                 self._send_workspace_error(error)
+            except SupabaseRestError:
+                self._send_workspace_unavailable()
             return
         user = self._require_user()
         if not user:
@@ -210,17 +229,31 @@ class SiteAnalyzerHandler(BaseHTTPRequestHandler):
         except WorkspaceError as error:
             self._send_workspace_error(error)
             return None
+        except SupabaseRestError:
+            self._send_workspace_unavailable()
+            return None
 
     def _workspace_action(self, operation) -> None:
         try:
             self._send_json(operation())
         except WorkspaceError as error:
             self._send_workspace_error(error)
+        except SupabaseRestError:
+            self._send_workspace_unavailable()
         except (TypeError, ValueError):
             self._send_json(
                 {"error": "INVALID_INPUT", "message": "輸入資料格式不正確。"},
                 400,
             )
+
+    def _send_workspace_unavailable(self) -> None:
+        self._send_json(
+            {
+                "error": "WORKSPACE_UNAVAILABLE",
+                "message": "案件資料服務暫時無法連線，請稍後再試。",
+            },
+            503,
+        )
 
     def _send_workspace_error(self, error) -> None:
         if isinstance(error, WorkspaceError):
